@@ -4,11 +4,6 @@ tls:
   cert: /etc/hysteria/certs/server.crt
   key: /etc/hysteria/certs/server.key
 
-obfs:
-  type: salamander
-  salamander:
-    password: "__HY2_OBFS_PASSWORD__"
-
 auth:
   type: userpass
   userpass:
