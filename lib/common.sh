@@ -150,6 +150,7 @@ PY
 validate_xray_config() {
   load_state
   docker run --rm \
+    --user 0:0 \
     -v "$VH_HOME/xray/config.json:/usr/local/etc/xray/config.json:ro" \
     "$XRAY_IMAGE" \
     run -test -config /usr/local/etc/xray/config.json
