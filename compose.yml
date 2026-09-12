@@ -55,10 +55,6 @@ services:
     container_name: vpn-web
     restart: unless-stopped
     network_mode: host
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
     security_opt:
       - no-new-privileges:true
     read_only: true
