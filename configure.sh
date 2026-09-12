@@ -10,8 +10,10 @@ load_state
 old_hy2_sni="$HY2_SNI"
 
 ask() {
-  local var="$1" label="$2" current="${!var}"
-  local value
+  local var="$1" label="$2" current="" value=""
+  if [[ -v "$var" ]]; then
+    current="${!var}"
+  fi
   read -r -p "$label [$current]: " value
   printf -v "$var" '%s' "${value:-$current}"
 }
