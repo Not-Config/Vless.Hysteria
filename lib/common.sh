@@ -45,14 +45,81 @@ load_state() {
   WEB_DOMAIN="${WEB_DOMAIN:-${HY2_SNI:-vpn.example.invalid}}"
   WEB_ALLOW_INSECURE="${WEB_ALLOW_INSECURE:-1}"
   NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.30.4-alpine}"
+  TLS_CERT_MODE="${TLS_CERT_MODE:-selfsigned}"
+  ACME_EMAIL="${ACME_EMAIL:-}"
+}
+
+update_certificate_fingerprint() {
+  HY2_CERT_SHA256="$(
+    openssl x509 \
+      -in "$VH_HOME/hysteria/certs/server.crt" \
+      -noout \
+      -fingerprint \
+      -sha256 |
+      cut -d= -f2 |
+      tr -d ':' |
+      tr '[:upper:]' '[:lower:]'
+  )"
+
+  if grep -q '^HY2_CERT_SHA256=' "$SECRETS_FILE"; then
+    sed -i "s/^HY2_CERT_SHA256=.*/HY2_CERT_SHA256=$HY2_CERT_SHA256/" "$SECRETS_FILE"
+  else
+    printf 'HY2_CERT_SHA256=%s\n' "$HY2_CERT_SHA256" >> "$SECRETS_FILE"
+  fi
+  chmod 600 "$SECRETS_FILE"
+}
+
+sync_letsencrypt_certificate() {
+  load_state
+  local live_dir="/etc/letsencrypt/live/$WEB_DOMAIN"
+
+  [[ -f "$live_dir/fullchain.pem" ]] || die "Missing Let's Encrypt certificate: $live_dir/fullchain.pem"
+  [[ -f "$live_dir/privkey.pem" ]] || die "Missing Let's Encrypt private key: $live_dir/privkey.pem"
+
+  mkdir -p "$VH_HOME/hysteria/certs"
+  install -m 0644 "$live_dir/fullchain.pem" "$VH_HOME/hysteria/certs/server.crt"
+  install -m 0600 "$live_dir/privkey.pem" "$VH_HOME/hysteria/certs/server.key"
+  update_certificate_fingerprint
 }
 
 generate_certificate() {
   load_state
   mkdir -p "$VH_HOME/hysteria/certs"
 
-  local san
-  san="$(python3 - "$HY2_SNI" "$WEB_DOMAIN" <<'PY'
+  case "$TLS_CERT_MODE" in
+    letsencrypt)
+      [[ "$HY2_SNI" == "$WEB_DOMAIN" ]] || die "Let's Encrypt shared mode requires HY2_SNI and WEB_DOMAIN to be the same domain"
+      [[ -n "$ACME_EMAIL" ]] || die "ACME_EMAIL is required for Let's Encrypt mode"
+      command -v certbot >/dev/null 2>&1 || die "certbot is not installed"
+
+      if python3 - "$WEB_DOMAIN" <<'PY' >/dev/null 2>&1
+import ipaddress, sys
+ipaddress.ip_address(sys.argv[1])
+PY
+      then
+        die "Let's Encrypt mode requires a DNS name, not an IP address"
+      fi
+
+      if [[ ! -f "/etc/letsencrypt/live/$WEB_DOMAIN/fullchain.pem" ]]; then
+        log "Requesting Let's Encrypt certificate for $WEB_DOMAIN"
+        log "TCP/80 must reach this server and the domain must already resolve to its public IP"
+        certbot certonly \
+          --standalone \
+          --non-interactive \
+          --agree-tos \
+          --preferred-challenges http \
+          --email "$ACME_EMAIL" \
+          -d "$WEB_DOMAIN"
+      else
+        log "Using existing Let's Encrypt certificate for $WEB_DOMAIN"
+      fi
+
+      sync_letsencrypt_certificate
+      ;;
+
+    selfsigned)
+      local san
+      san="$(python3 - "$HY2_SNI" "$WEB_DOMAIN" <<'PY'
 import ipaddress, sys
 
 values = []
@@ -73,39 +140,28 @@ print(",".join(parts))
 PY
 )"
 
-  log "Generating shared TLS certificate for Hysteria2/web: $HY2_SNI, $WEB_DOMAIN"
-  openssl req \
-    -x509 \
-    -newkey rsa:3072 \
-    -sha256 \
-    -nodes \
-    -days "${HY2_CERT_DAYS:-3650}" \
-    -keyout "$VH_HOME/hysteria/certs/server.key" \
-    -out "$VH_HOME/hysteria/certs/server.crt" \
-    -subj "/CN=$HY2_SNI" \
-    -addext "subjectAltName=$san" \
-    >/dev/null 2>&1
+      log "Generating shared self-signed TLS certificate for Hysteria2/web: $HY2_SNI, $WEB_DOMAIN"
+      openssl req \
+        -x509 \
+        -newkey rsa:3072 \
+        -sha256 \
+        -nodes \
+        -days "${HY2_CERT_DAYS:-3650}" \
+        -keyout "$VH_HOME/hysteria/certs/server.key" \
+        -out "$VH_HOME/hysteria/certs/server.crt" \
+        -subj "/CN=$HY2_SNI" \
+        -addext "subjectAltName=$san" \
+        >/dev/null 2>&1
 
-  chmod 600 "$VH_HOME/hysteria/certs/server.key"
-  chmod 644 "$VH_HOME/hysteria/certs/server.crt"
+      chmod 600 "$VH_HOME/hysteria/certs/server.key"
+      chmod 644 "$VH_HOME/hysteria/certs/server.crt"
+      update_certificate_fingerprint
+      ;;
 
-  HY2_CERT_SHA256="$(
-    openssl x509 \
-      -in "$VH_HOME/hysteria/certs/server.crt" \
-      -noout \
-      -fingerprint \
-      -sha256 |
-      cut -d= -f2 |
-      tr -d ':' |
-      tr '[:upper:]' '[:lower:]'
-  )"
-
-  if grep -q '^HY2_CERT_SHA256=' "$SECRETS_FILE"; then
-    sed -i "s/^HY2_CERT_SHA256=.*/HY2_CERT_SHA256=$HY2_CERT_SHA256/" "$SECRETS_FILE"
-  else
-    printf 'HY2_CERT_SHA256=%s\n' "$HY2_CERT_SHA256" >> "$SECRETS_FILE"
-  fi
-  chmod 600 "$SECRETS_FILE"
+    *)
+      die "TLS_CERT_MODE must be selfsigned or letsencrypt"
+      ;;
+  esac
 }
 
 render_configs() {
@@ -270,13 +326,14 @@ print_user_links() {
     "$HY2_CERT_SHA256" \
     "$WEB_DOMAIN" \
     "$WEB_ALLOW_INSECURE" \
-    "$VLESS_GRPC_SERVICE" <<'PY'
+    "$VLESS_GRPC_SERVICE" \
+    "$TLS_CERT_MODE" <<'PY'
 import sys
 from urllib.parse import quote, urlencode
 (
     mode, host, vport, hport, user, uuid, hy2_password, reality_sni,
     reality_fp, reality_public, short_id, hy2_sni, cert_pin, web_domain,
-    web_allow_insecure, grpc_service
+    web_allow_insecure, grpc_service, tls_cert_mode
 ) = sys.argv[1:]
 
 if mode == "web-grpc":
@@ -289,7 +346,7 @@ if mode == "web-grpc":
         "type": "grpc",
         "serviceName": grpc_service,
     }
-    if web_allow_insecure == "1":
+    if tls_cert_mode != "letsencrypt" and web_allow_insecure == "1":
         v_query["allowInsecure"] = "1"
     vless_name = "VLESS-gRPC-" + user
 else:
@@ -308,11 +365,10 @@ else:
 vless = f"vless://{uuid}@{host}:{vport}?{urlencode(v_query)}#{quote(vless_name)}"
 
 hy2_auth = f"{quote(user, safe='')}:{quote(hy2_password, safe='')}"
-h_query = urlencode({
-    "sni": hy2_sni,
-    "pinSHA256": cert_pin,
-})
-hy2 = f"hy2://{hy2_auth}@{host}:{hport}/?{h_query}#{quote('HY2-' + user)}"
+h_query = {"sni": hy2_sni}
+if tls_cert_mode != "letsencrypt" and cert_pin:
+    h_query["pinSHA256"] = cert_pin
+hy2 = f"hy2://{hy2_auth}@{host}:{hport}/?{urlencode(h_query)}#{quote('HY2-' + user)}"
 
 print("VLESS:")
 print(vless)
