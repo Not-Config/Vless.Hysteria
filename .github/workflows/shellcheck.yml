@@ -14,9 +14,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Validate Bash syntax
+        run: |
+          bash -n \
+            install.sh \
+            configure.sh \
+            status.sh \
+            user.sh \
+            backup.sh \
+            diagnostics.sh \
+            update.sh \
+            uninstall.sh \
+            watchdog.sh \
+            lib/common.sh
       - name: Check shell scripts
         run: |
-          shellcheck \
+          shellcheck --severity=error \
             install.sh \
             configure.sh \
             status.sh \
