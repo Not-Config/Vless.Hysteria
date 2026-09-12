@@ -37,6 +37,14 @@ port_state_udp() {
   fi
 }
 
+cert_expiry() {
+  if [[ -f "$VH_HOME/hysteria/certs/server.crt" ]]; then
+    openssl x509 -in "$VH_HOME/hysteria/certs/server.crt" -noout -enddate 2>/dev/null | cut -d= -f2-
+  else
+    printf 'missing'
+  fi
+}
+
 printf 'Vless.Hysteria status\n'
 printf '  VLESS mode:          %s\n' "$VLESS_MODE"
 printf '  Xray container:      %s\n' "$(container_state vpn-xray)"
@@ -55,8 +63,19 @@ else
   printf '  Watchdog timer:      DOWN\n'
 fi
 
+printf '  TLS certificate:     %s\n' "$TLS_CERT_MODE"
+printf '  TLS expires:         %s\n' "$(cert_expiry)"
+if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  if systemctl is-active --quiet vless-hysteria-cert-renew.timer; then
+    printf '  Cert renew timer:    OK\n'
+  else
+    printf '  Cert renew timer:    DOWN\n'
+  fi
+fi
+
 printf '  Public VLESS:        %s:%s/TCP\n' "$PUBLIC_HOST" "$PUBLIC_VLESS_PORT"
 printf '  Public Hysteria2:    %s:%s/UDP\n' "$PUBLIC_HOST" "$PUBLIC_HY2_PORT"
+printf '  Hysteria2 SNI:       %s\n' "$HY2_SNI"
 if [[ "$VLESS_MODE" == "web-grpc" ]]; then
   printf '  Website SNI:         %s\n' "$WEB_DOMAIN"
   printf '  gRPC service:        /%s/\n' "$VLESS_GRPC_SERVICE"
@@ -72,4 +91,8 @@ if [[ $brief -eq 0 ]]; then
   ss -lntup | grep -E "(:${VLESS_LISTEN_PORT}[[:space:]]|:${VLESS_GRPC_BACKEND_PORT}[[:space:]]|:${WEB_LOCAL_PORT}[[:space:]]|:${HY2_LISTEN_PORT}[[:space:]])" || true
   printf '\nRecent watchdog entries:\n'
   journalctl -u vless-hysteria-watchdog.service -n 10 --no-pager 2>/dev/null || true
+  if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+    printf '\nRecent certificate renewal entries:\n'
+    journalctl -u vless-hysteria-cert-renew.service -n 10 --no-pager 2>/dev/null || true
+  fi
 fi
