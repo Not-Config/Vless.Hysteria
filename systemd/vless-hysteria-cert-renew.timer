@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Vless.Hysteria TLS certificate renewal daily
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=24h
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
