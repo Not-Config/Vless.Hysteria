@@ -116,15 +116,17 @@ INITIAL_USER=$INITIAL_USER
 EOF
 chmod 600 "$ENV_FILE"
 
-if [[ "$HY2_SNI" != "$old_hy2_sni" || "$WEB_DOMAIN" != "$old_web_domain" || "$TLS_CERT_MODE" != "$old_tls_cert_mode" || ! -f "$VH_HOME/hysteria/certs/server.crt" ]]; then
-  if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  le_live_dir="/etc/letsencrypt/live/$WEB_DOMAIN"
+  if [[ "$HY2_SNI" != "$old_hy2_sni" || "$WEB_DOMAIN" != "$old_web_domain" || "$TLS_CERT_MODE" != "$old_tls_cert_mode" || ! -f "$le_live_dir/fullchain.pem" || ! -f "$le_live_dir/privkey.pem" ]]; then
     warn "Requesting a public certificate requires $WEB_DOMAIN to resolve to this server and TCP/80 to be reachable from the Internet."
+    generate_certificate
   else
-    warn "TLS names or certificate mode changed; regenerating the shared Hysteria2/web certificate. Existing HY2 client pins will change."
+    sync_letsencrypt_certificate
   fi
+elif [[ "$HY2_SNI" != "$old_hy2_sni" || "$WEB_DOMAIN" != "$old_web_domain" || "$TLS_CERT_MODE" != "$old_tls_cert_mode" || ! -f "$VH_HOME/hysteria/certs/server.crt" ]]; then
+  warn "TLS names or certificate mode changed; regenerating the shared Hysteria2/web certificate. Existing HY2 client pins will change."
   generate_certificate
-elif [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
-  sync_letsencrypt_certificate
 fi
 
 render_configs
