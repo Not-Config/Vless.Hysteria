@@ -108,7 +108,6 @@ render_configs() {
   export R_REALITY_PRIVATE_KEY="$REALITY_PRIVATE_KEY"
   export R_REALITY_SHORT_ID="$REALITY_SHORT_ID"
   export R_HY2_LISTEN_PORT="$HY2_LISTEN_PORT"
-  export R_HY2_OBFS_PASSWORD="$HY2_OBFS_PASSWORD"
   export R_HY2_USERPASS_YAML="$hy2_users"
   export R_HY2_MASQUERADE="$HY2_MASQUERADE"
 
@@ -135,7 +134,6 @@ src, dst = map(pathlib.Path, sys.argv[1:3])
 s = src.read_text()
 repl = {
     "__HY2_LISTEN_PORT__": os.environ["R_HY2_LISTEN_PORT"],
-    "__HY2_OBFS_PASSWORD__": os.environ["R_HY2_OBFS_PASSWORD"],
     "__HY2_USERPASS_YAML__": os.environ["R_HY2_USERPASS_YAML"],
     "__HY2_MASQUERADE__": os.environ["R_HY2_MASQUERADE"],
 }
@@ -197,13 +195,12 @@ print_user_links() {
     "$REALITY_PUBLIC_KEY" \
     "$REALITY_SHORT_ID" \
     "$HY2_SNI" \
-    "$HY2_OBFS_PASSWORD" \
     "$HY2_CERT_SHA256" <<'PY'
 import sys
 from urllib.parse import quote, urlencode
 (
     host, vport, hport, user, uuid, hy2_password, reality_sni,
-    reality_public, short_id, hy2_sni, obfs_password, cert_pin
+    reality_public, short_id, hy2_sni, cert_pin
 ) = sys.argv[1:]
 
 v_query = urlencode({
@@ -221,8 +218,6 @@ vless = f"vless://{uuid}@{host}:{vport}?{v_query}#{quote('VLESS-' + user)}"
 hy2_auth = f"{quote(user, safe='')}:{quote(hy2_password, safe='')}"
 h_query = urlencode({
     "sni": hy2_sni,
-    "obfs": "salamander",
-    "obfs-password": obfs_password,
     "pinSHA256": cert_pin,
 })
 hy2 = f"hy2://{hy2_auth}@{host}:{hport}/?{h_query}#{quote('HY2-' + user)}"
