@@ -18,15 +18,22 @@ tar -C "$VH_HOME" -czf "$out" \
   compose.yml \
   templates \
   lib \
+  systemd \
   xray \
   hysteria \
+  web \
   configure.sh \
   status.sh \
   user.sh \
   diagnostics.sh \
   update.sh \
-  watchdog.sh
+  uninstall.sh \
+  watchdog.sh \
+  cert-renew.sh
 chmod 600 "$out"
 
 printf 'Backup created: %s\n' "$out"
 printf 'WARNING: this archive contains private keys and user credentials. Store it securely.\n'
+if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  printf 'NOTE: Certbot account and renewal state under /etc/letsencrypt is not included in this archive.\n'
+fi
