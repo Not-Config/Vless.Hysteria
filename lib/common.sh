@@ -36,8 +36,15 @@ load_state() {
   # shellcheck disable=SC1090
   source "$SECRETS_FILE"
 
-  # Backward-compatible default for installations created before this option existed.
+  # Backward-compatible defaults for older installations.
+  VLESS_MODE="${VLESS_MODE:-reality}"
+  VLESS_GRPC_BACKEND_PORT="${VLESS_GRPC_BACKEND_PORT:-10000}"
+  VLESS_GRPC_SERVICE="${VLESS_GRPC_SERVICE:-api/v1/stream}"
   REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-chrome}"
+  WEB_LOCAL_PORT="${WEB_LOCAL_PORT:-8080}"
+  WEB_DOMAIN="${WEB_DOMAIN:-${HY2_SNI:-vpn.example.invalid}}"
+  WEB_ALLOW_INSECURE="${WEB_ALLOW_INSECURE:-1}"
+  NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.30.4-alpine}"
 }
 
 generate_certificate() {
@@ -45,17 +52,28 @@ generate_certificate() {
   mkdir -p "$VH_HOME/hysteria/certs"
 
   local san
-  if python3 - "$HY2_SNI" <<'PY' >/dev/null 2>&1
+  san="$(python3 - "$HY2_SNI" "$WEB_DOMAIN" <<'PY'
 import ipaddress, sys
-ipaddress.ip_address(sys.argv[1])
-PY
-  then
-    san="IP:$HY2_SNI"
-  else
-    san="DNS:$HY2_SNI"
-  fi
 
-  log "Generating Hysteria2 TLS certificate for $HY2_SNI"
+values = []
+for value in sys.argv[1:]:
+    if value in values:
+        continue
+    values.append(value)
+
+parts = []
+for value in values:
+    try:
+        ipaddress.ip_address(value)
+        parts.append(f"IP:{value}")
+    except ValueError:
+        parts.append(f"DNS:{value}")
+
+print(",".join(parts))
+PY
+)"
+
+  log "Generating shared TLS certificate for Hysteria2/web: $HY2_SNI, $WEB_DOMAIN"
   openssl req \
     -x509 \
     -newkey rsa:3072 \
@@ -93,18 +111,30 @@ PY
 render_configs() {
   load_state
 
-  mkdir -p "$VH_HOME/xray" "$VH_HOME/hysteria"
+  mkdir -p "$VH_HOME/xray" "$VH_HOME/hysteria" "$VH_HOME/web/html"
 
-  local vless_clients hy2_users
-  vless_clients="$(
-    jq -c '[.[] | {id: .vless_uuid, flow: "xtls-rprx-vision", email: .name}]' "$USERS_FILE"
-  )"
+  local vless_clients hy2_users xray_template nginx_template
+  if [[ "$VLESS_MODE" == "web-grpc" ]]; then
+    vless_clients="$(
+      jq -c '[.[] | {id: .vless_uuid, email: .name}]' "$USERS_FILE"
+    )"
+    xray_template="$VH_HOME/templates/xray-grpc.json.tpl"
+    nginx_template="$VH_HOME/templates/nginx-grpc.conf.tpl"
+  else
+    vless_clients="$(
+      jq -c '[.[] | {id: .vless_uuid, flow: "xtls-rprx-vision", email: .name}]' "$USERS_FILE"
+    )"
+    xray_template="$VH_HOME/templates/xray.json.tpl"
+    nginx_template="$VH_HOME/templates/nginx-local.conf.tpl"
+  fi
 
   hy2_users="$(
     jq -r '.[] | "    " + .name + ": \"" + .hy2_password + "\""' "$USERS_FILE"
   )"
 
   export R_VLESS_LISTEN_PORT="$VLESS_LISTEN_PORT"
+  export R_VLESS_GRPC_BACKEND_PORT="$VLESS_GRPC_BACKEND_PORT"
+  export R_VLESS_GRPC_SERVICE="$VLESS_GRPC_SERVICE"
   export R_VLESS_CLIENTS_JSON="$vless_clients"
   export R_REALITY_DEST="$REALITY_DEST"
   export R_REALITY_SNI="$REALITY_SNI"
@@ -113,13 +143,17 @@ render_configs() {
   export R_HY2_LISTEN_PORT="$HY2_LISTEN_PORT"
   export R_HY2_USERPASS_YAML="$hy2_users"
   export R_HY2_MASQUERADE="$HY2_MASQUERADE"
+  export R_WEB_LOCAL_PORT="$WEB_LOCAL_PORT"
+  export R_WEB_DOMAIN="$WEB_DOMAIN"
 
-  python3 - "$VH_HOME/templates/xray.json.tpl" "$VH_HOME/xray/config.json" <<'PY'
+  python3 - "$xray_template" "$VH_HOME/xray/config.json" <<'PY'
 import os, pathlib, sys
 src, dst = map(pathlib.Path, sys.argv[1:3])
 s = src.read_text()
 repl = {
     "__VLESS_LISTEN_PORT__": os.environ["R_VLESS_LISTEN_PORT"],
+    "__VLESS_GRPC_BACKEND_PORT__": os.environ["R_VLESS_GRPC_BACKEND_PORT"],
+    "__VLESS_GRPC_SERVICE__": os.environ["R_VLESS_GRPC_SERVICE"],
     "__VLESS_CLIENTS_JSON__": os.environ["R_VLESS_CLIENTS_JSON"],
     "__REALITY_DEST__": os.environ["R_REALITY_DEST"],
     "__REALITY_SNI__": os.environ["R_REALITY_SNI"],
@@ -145,7 +179,23 @@ for old, new in repl.items():
 dst.write_text(s)
 PY
 
-  chmod 600 "$VH_HOME/xray/config.json" "$VH_HOME/hysteria/config.yaml"
+  python3 - "$nginx_template" "$VH_HOME/web/nginx.conf" <<'PY'
+import os, pathlib, sys
+src, dst = map(pathlib.Path, sys.argv[1:3])
+s = src.read_text()
+repl = {
+    "__VLESS_LISTEN_PORT__": os.environ["R_VLESS_LISTEN_PORT"],
+    "__VLESS_GRPC_BACKEND_PORT__": os.environ["R_VLESS_GRPC_BACKEND_PORT"],
+    "__VLESS_GRPC_SERVICE__": os.environ["R_VLESS_GRPC_SERVICE"],
+    "__WEB_LOCAL_PORT__": os.environ["R_WEB_LOCAL_PORT"],
+    "__WEB_DOMAIN__": os.environ["R_WEB_DOMAIN"],
+}
+for old, new in repl.items():
+    s = s.replace(old, new)
+dst.write_text(s)
+PY
+
+  chmod 600 "$VH_HOME/xray/config.json" "$VH_HOME/hysteria/config.yaml" "$VH_HOME/web/nginx.conf"
 }
 
 validate_xray_config() {
@@ -157,8 +207,21 @@ validate_xray_config() {
     run -test -config /usr/local/etc/xray/config.json
 }
 
+validate_nginx_config() {
+  load_state
+  docker run --rm \
+    --network host \
+    -v "$VH_HOME/web/nginx.conf:/etc/nginx/nginx.conf:ro" \
+    -v "$VH_HOME/web/html:/usr/share/nginx/html:ro" \
+    -v "$VH_HOME/hysteria/certs:/etc/nginx/tls:ro" \
+    "$NGINX_IMAGE" \
+    nginx -t
+}
+
 validate_reality_target() {
   load_state
+  [[ "$VLESS_MODE" == "reality" ]] || return 0
+
   if timeout 10 openssl s_client \
       -connect "$REALITY_DEST:443" \
       -servername "$REALITY_SNI" \
@@ -172,7 +235,11 @@ validate_reality_target() {
 
 restart_stack() {
   load_state
-  (cd "$VH_HOME" && docker compose up -d --force-recreate)
+  (
+    cd "$VH_HOME"
+    docker compose down >/dev/null 2>&1 || true
+    docker compose up -d
+  )
 }
 
 print_user_links() {
@@ -188,6 +255,7 @@ print_user_links() {
   hy2_password="$(jq -r '.hy2_password' <<<"$row")"
 
   python3 - \
+    "$VLESS_MODE" \
     "$PUBLIC_HOST" \
     "$PUBLIC_VLESS_PORT" \
     "$PUBLIC_HY2_PORT" \
@@ -199,25 +267,45 @@ print_user_links() {
     "$REALITY_PUBLIC_KEY" \
     "$REALITY_SHORT_ID" \
     "$HY2_SNI" \
-    "$HY2_CERT_SHA256" <<'PY'
+    "$HY2_CERT_SHA256" \
+    "$WEB_DOMAIN" \
+    "$WEB_ALLOW_INSECURE" \
+    "$VLESS_GRPC_SERVICE" <<'PY'
 import sys
 from urllib.parse import quote, urlencode
 (
-    host, vport, hport, user, uuid, hy2_password, reality_sni,
-    reality_fp, reality_public, short_id, hy2_sni, cert_pin
+    mode, host, vport, hport, user, uuid, hy2_password, reality_sni,
+    reality_fp, reality_public, short_id, hy2_sni, cert_pin, web_domain,
+    web_allow_insecure, grpc_service
 ) = sys.argv[1:]
 
-v_query = urlencode({
-    "encryption": "none",
-    "flow": "xtls-rprx-vision",
-    "security": "reality",
-    "sni": reality_sni,
-    "fp": reality_fp,
-    "pbk": reality_public,
-    "sid": short_id,
-    "type": "tcp",
-})
-vless = f"vless://{uuid}@{host}:{vport}?{v_query}#{quote('VLESS-' + user)}"
+if mode == "web-grpc":
+    v_query = {
+        "encryption": "none",
+        "security": "tls",
+        "sni": web_domain,
+        "fp": reality_fp,
+        "alpn": "h2",
+        "type": "grpc",
+        "serviceName": grpc_service,
+    }
+    if web_allow_insecure == "1":
+        v_query["allowInsecure"] = "1"
+    vless_name = "VLESS-gRPC-" + user
+else:
+    v_query = {
+        "encryption": "none",
+        "flow": "xtls-rprx-vision",
+        "security": "reality",
+        "sni": reality_sni,
+        "fp": reality_fp,
+        "pbk": reality_public,
+        "sid": short_id,
+        "type": "tcp",
+    }
+    vless_name = "VLESS-REALITY-" + user
+
+vless = f"vless://{uuid}@{host}:{vport}?{urlencode(v_query)}#{quote(vless_name)}"
 
 hy2_auth = f"{quote(user, safe='')}:{quote(hy2_password, safe='')}"
 h_query = urlencode({
