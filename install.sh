@@ -3,8 +3,10 @@ set -Eeuo pipefail
 
 SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 VH_HOME="${VH_HOME:-/opt/vless-hysteria}"
+INSTALL_MARKER="$VH_HOME/.installed"
 NON_INTERACTIVE=0
 FORCE=0
+RESET_EXISTING=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -29,8 +31,17 @@ die() { printf '[Vless.Hysteria] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "Run as root (sudo)."
 [[ -f "$SOURCE_DIR/compose.yml" ]] || die "Run install.sh from a complete repository checkout."
 
-if [[ -e "$VH_HOME/.env" && $FORCE -ne 1 ]]; then
-  die "$VH_HOME already contains an installation. Use --force only if you intend to replace generated configuration."
+if [[ -e "$VH_HOME/.env" ]]; then
+  if [[ -e "$INSTALL_MARKER" && $FORCE -ne 1 ]]; then
+    die "$VH_HOME already contains a completed installation. Use --force only if you intend to replace generated configuration."
+  fi
+
+  RESET_EXISTING=1
+  if [[ -e "$INSTALL_MARKER" ]]; then
+    log "Force reinstall requested; existing generated configuration will be replaced"
+  else
+    log "Detected an incomplete previous installation; resuming from a clean generated state"
+  fi
 fi
 
 prompt_value() {
@@ -86,6 +97,11 @@ install_docker() {
 
 install_base_packages
 install_docker
+
+if [[ $RESET_EXISTING -eq 1 && -f "$VH_HOME/compose.yml" ]]; then
+  log "Stopping any containers left by the previous installation attempt"
+  (cd "$VH_HOME" && docker compose down --remove-orphans) >/dev/null 2>&1 || true
+fi
 
 AUTO_PUBLIC="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
 if [[ -z "$AUTO_PUBLIC" ]]; then
@@ -147,6 +163,7 @@ HY2_CERT_DAYS=$HY2_CERT_DAYS
 INITIAL_USER=$INITIAL_USER
 EOF
 chmod 600 "$VH_HOME/.env"
+rm -f "$INSTALL_MARKER"
 
 log "Pulling pinned container images"
 docker pull "$XRAY_IMAGE"
@@ -199,6 +216,9 @@ systemctl daemon-reload
 systemctl enable --now vless-hysteria-watchdog.timer
 
 sleep 2
+
+touch "$INSTALL_MARKER"
+chmod 600 "$INSTALL_MARKER"
 
 printf '\n========================================\n'
 printf ' Vless.Hysteria installation complete\n'
