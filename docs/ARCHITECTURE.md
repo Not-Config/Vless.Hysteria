@@ -14,8 +14,8 @@ The stack keeps the two client transports independent while sharing one Linux ho
               v                           v
         +-----------+               +-------------+
         | Xray-core |               | Hysteria2   |
-        | VLESS     |               | QUIC        |
-        | REALITY   |               | Salamander  |
+        | VLESS     |               | QUIC/HTTP3  |
+        | REALITY   |               | Masquerade  |
         +-----------+               +-------------+
               |                           |
               +-------------+-------------+
@@ -43,10 +43,12 @@ The container is configured with host networking and only `NET_BIND_SERVICE` aft
 Provides:
 
 - QUIC/UDP transport;
-- Salamander obfuscation;
+- native HTTP/3-compatible traffic without Salamander obfuscation;
 - per-user `userpass` authentication;
-- HTTPS masquerading;
+- HTTP/3 masquerading through a reverse proxy;
 - certificate SHA-256 pinning for portable self-signed TLS.
+
+The project intentionally leaves Hysteria2 obfuscation disabled so the server keeps normal QUIC/HTTP/3 behavior. For a public deployment that should look like a normal website during ordinary TLS/HTTP/3 checks, a real domain with a publicly trusted certificate is preferable to the portable self-signed lab certificate.
 
 ### Docker Compose
 
@@ -70,7 +72,7 @@ Runtime state lives under `/opt/vless-hysteria`:
 ```text
 /opt/vless-hysteria/
 ├── .env                 # non-secret deployment settings
-├── secrets.env          # REALITY/Salamander/certificate data
+├── secrets.env          # REALITY/certificate data
 ├── users.json           # per-user credentials
 ├── compose.yml
 ├── xray/config.json     # generated
