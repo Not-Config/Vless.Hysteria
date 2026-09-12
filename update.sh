@@ -13,12 +13,13 @@ backup="/root/vless-hysteria-pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
 log "Pulling configured images"
 docker pull "$XRAY_IMAGE"
 docker pull "$HYSTERIA_IMAGE"
+docker pull "$NGINX_IMAGE"
 
 render_configs
+validate_reality_target
 validate_xray_config
-
-log "Recreating stack"
-(cd "$VH_HOME" && docker compose up -d --force-recreate)
+validate_nginx_config
+restart_stack
 
 sleep 2
 "$VH_HOME/status.sh" --brief
