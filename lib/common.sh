@@ -35,6 +35,9 @@ load_state() {
   source "$ENV_FILE"
   # shellcheck disable=SC1090
   source "$SECRETS_FILE"
+
+  # Backward-compatible default for installations created before this option existed.
+  REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-chrome}"
 }
 
 generate_certificate() {
@@ -192,6 +195,7 @@ print_user_links() {
     "$uuid" \
     "$hy2_password" \
     "$REALITY_SNI" \
+    "$REALITY_FINGERPRINT" \
     "$REALITY_PUBLIC_KEY" \
     "$REALITY_SHORT_ID" \
     "$HY2_SNI" \
@@ -200,7 +204,7 @@ import sys
 from urllib.parse import quote, urlencode
 (
     host, vport, hport, user, uuid, hy2_password, reality_sni,
-    reality_public, short_id, hy2_sni, cert_pin
+    reality_fp, reality_public, short_id, hy2_sni, cert_pin
 ) = sys.argv[1:]
 
 v_query = urlencode({
@@ -208,7 +212,7 @@ v_query = urlencode({
     "flow": "xtls-rprx-vision",
     "security": "reality",
     "sni": reality_sni,
-    "fp": "chrome",
+    "fp": reality_fp,
     "pbk": reality_public,
     "sid": short_id,
     "type": "tcp",
