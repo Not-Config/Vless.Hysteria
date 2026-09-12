@@ -18,7 +18,7 @@ Usage: sudo ./install.sh [--non-interactive] [--force]
 
 Environment variables can override installer defaults, for example:
   PUBLIC_HOST=vpn.example.com VLESS_MODE=reality REALITY_SNI=www.yandex.ru sudo -E ./install.sh
-  PUBLIC_HOST=vpn.example.com VLESS_MODE=web-grpc HY2_SNI=vpn.example.com WEB_DOMAIN=vpn.example.com sudo -E ./install.sh
+  PUBLIC_HOST=vpn.example.com VLESS_MODE=web-grpc HY2_SNI=vpn.example.com WEB_DOMAIN=vpn.example.com TLS_CERT_MODE=letsencrypt ACME_EMAIL=admin@example.com sudo -E ./install.sh
 EOF
       exit 0
       ;;
@@ -76,7 +76,7 @@ install_base_packages() {
   log "Installing base packages"
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    ca-certificates curl openssl jq uuid-runtime python3 iproute2 tar
+    ca-certificates curl openssl jq uuid-runtime python3 iproute2 tar certbot
 }
 
 install_docker() {
@@ -143,8 +143,21 @@ esac
 prompt_value REALITY_FINGERPRINT "Client TLS fingerprint" "chrome"
 prompt_value HY2_SNI "Hysteria2 certificate/SNI name" "vpn.example.invalid"
 prompt_value WEB_DOMAIN "Website domain/SNI for web-grpc mode" "$HY2_SNI"
+prompt_value TLS_CERT_MODE "Shared TLS certificate mode (selfsigned or letsencrypt)" "selfsigned"
+
+case "$TLS_CERT_MODE" in
+  letsencrypt)
+    prompt_value ACME_EMAIL "Let's Encrypt account email" ""
+    WEB_ALLOW_INSECURE=0
+    ;;
+  selfsigned)
+    ACME_EMAIL="${ACME_EMAIL:-}"
+    prompt_value WEB_ALLOW_INSECURE "Allow self-signed TLS in generated web-grpc client link (1 or 0)" "1"
+    ;;
+  *) die "TLS_CERT_MODE must be selfsigned or letsencrypt" ;;
+esac
+
 prompt_value WEB_LOCAL_PORT "Internal camouflage website HTTP port" "8080"
-prompt_value WEB_ALLOW_INSECURE "Allow self-signed TLS in generated web-grpc client link (1 or 0)" "1"
 prompt_value HY2_MASQUERADE "Hysteria2 masquerade URL" "http://127.0.0.1:${WEB_LOCAL_PORT}/"
 prompt_value INITIAL_USER "Initial username" "default"
 
@@ -168,6 +181,11 @@ esac
 [[ "$VLESS_GRPC_SERVICE" =~ ^[A-Za-z0-9._/-]+$ ]] || die "VLESS_GRPC_SERVICE contains unsupported characters"
 [[ "$VLESS_GRPC_SERVICE" != /* && "$VLESS_GRPC_SERVICE" != */ ]] || die "VLESS_GRPC_SERVICE must not start or end with /"
 [[ "$INITIAL_USER" =~ ^[A-Za-z0-9_.-]{1,32}$ ]] || die "INITIAL_USER must match [A-Za-z0-9_.-] and be 1-32 characters long"
+
+if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  [[ "$HY2_SNI" == "$WEB_DOMAIN" ]] || die "Let's Encrypt shared mode requires HY2_SNI and WEB_DOMAIN to be identical"
+  [[ "$ACME_EMAIL" == *@*.* ]] || die "ACME_EMAIL must look like an email address"
+fi
 
 if [[ "$VLESS_MODE" == "web-grpc" ]]; then
   [[ "$VLESS_GRPC_BACKEND_PORT" != "$VLESS_LISTEN_PORT" ]] || die "VLESS_GRPC_BACKEND_PORT must differ from VLESS_LISTEN_PORT"
@@ -205,7 +223,7 @@ install -m 0644 "$SOURCE_DIR/templates/nginx-grpc.conf.tpl" "$VH_HOME/templates/
 install -m 0644 "$SOURCE_DIR/web/index.html" "$VH_HOME/web/html/index.html"
 install -m 0644 "$SOURCE_DIR/lib/common.sh" "$VH_HOME/lib/common.sh"
 
-for script in configure.sh status.sh user.sh backup.sh diagnostics.sh update.sh uninstall.sh watchdog.sh; do
+for script in configure.sh status.sh user.sh backup.sh diagnostics.sh update.sh uninstall.sh watchdog.sh cert-renew.sh; do
   install -m 0750 "$SOURCE_DIR/$script" "$VH_HOME/$script"
 done
 
@@ -230,6 +248,8 @@ HY2_CERT_DAYS=$HY2_CERT_DAYS
 WEB_DOMAIN=$WEB_DOMAIN
 WEB_LOCAL_PORT=$WEB_LOCAL_PORT
 WEB_ALLOW_INSECURE=$WEB_ALLOW_INSECURE
+TLS_CERT_MODE=$TLS_CERT_MODE
+ACME_EMAIL=$ACME_EMAIL
 INITIAL_USER=$INITIAL_USER
 EOF
 chmod 600 "$VH_HOME/.env"
@@ -277,8 +297,8 @@ validate_reality_target
 validate_xray_config
 validate_nginx_config
 
-if [[ "$VLESS_MODE" == "web-grpc" && "$WEB_ALLOW_INSECURE" == "1" ]]; then
-  warn "web-grpc currently uses the generated self-signed certificate. The generated VLESS link disables certificate verification. Use a publicly trusted certificate for a real public deployment."
+if [[ "$VLESS_MODE" == "web-grpc" && "$TLS_CERT_MODE" == "selfsigned" && "$WEB_ALLOW_INSECURE" == "1" ]]; then
+  warn "web-grpc is using a self-signed certificate. The generated VLESS link disables certificate verification. Use TLS_CERT_MODE=letsencrypt for a normal public certificate."
 fi
 
 log "Starting VPN stack"
@@ -286,8 +306,16 @@ restart_stack
 
 install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-watchdog.service" /etc/systemd/system/vless-hysteria-watchdog.service
 install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-watchdog.timer" /etc/systemd/system/vless-hysteria-watchdog.timer
+install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-cert-renew.service" /etc/systemd/system/vless-hysteria-cert-renew.service
+install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-cert-renew.timer" /etc/systemd/system/vless-hysteria-cert-renew.timer
 systemctl daemon-reload
 systemctl enable --now vless-hysteria-watchdog.timer
+
+if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  systemctl enable --now vless-hysteria-cert-renew.timer
+else
+  systemctl disable --now vless-hysteria-cert-renew.timer >/dev/null 2>&1 || true
+fi
 
 sleep 2
 
