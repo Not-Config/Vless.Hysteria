@@ -223,6 +223,14 @@ install -m 0644 "$SOURCE_DIR/templates/nginx-grpc.conf.tpl" "$VH_HOME/templates/
 install -m 0644 "$SOURCE_DIR/web/index.html" "$VH_HOME/web/html/index.html"
 install -m 0644 "$SOURCE_DIR/lib/common.sh" "$VH_HOME/lib/common.sh"
 
+for unit in \
+  vless-hysteria-watchdog.service \
+  vless-hysteria-watchdog.timer \
+  vless-hysteria-cert-renew.service \
+  vless-hysteria-cert-renew.timer; do
+  install -m 0644 "$SOURCE_DIR/systemd/$unit" "$VH_HOME/systemd/$unit"
+done
+
 for script in configure.sh status.sh user.sh backup.sh diagnostics.sh update.sh uninstall.sh watchdog.sh cert-renew.sh; do
   install -m 0750 "$SOURCE_DIR/$script" "$VH_HOME/$script"
 done
@@ -304,10 +312,10 @@ fi
 log "Starting VPN stack"
 restart_stack
 
-install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-watchdog.service" /etc/systemd/system/vless-hysteria-watchdog.service
-install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-watchdog.timer" /etc/systemd/system/vless-hysteria-watchdog.timer
-install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-cert-renew.service" /etc/systemd/system/vless-hysteria-cert-renew.service
-install -m 0644 "$SOURCE_DIR/systemd/vless-hysteria-cert-renew.timer" /etc/systemd/system/vless-hysteria-cert-renew.timer
+install -m 0644 "$VH_HOME/systemd/vless-hysteria-watchdog.service" /etc/systemd/system/vless-hysteria-watchdog.service
+install -m 0644 "$VH_HOME/systemd/vless-hysteria-watchdog.timer" /etc/systemd/system/vless-hysteria-watchdog.timer
+install -m 0644 "$VH_HOME/systemd/vless-hysteria-cert-renew.service" /etc/systemd/system/vless-hysteria-cert-renew.service
+install -m 0644 "$VH_HOME/systemd/vless-hysteria-cert-renew.timer" /etc/systemd/system/vless-hysteria-cert-renew.timer
 systemctl daemon-reload
 systemctl enable --now vless-hysteria-watchdog.timer
 
