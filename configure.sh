@@ -9,6 +9,7 @@ load_state
 
 old_hy2_sni="$HY2_SNI"
 old_web_domain="$WEB_DOMAIN"
+old_tls_cert_mode="$TLS_CERT_MODE"
 
 ask() {
   local var="$1" label="$2" current="" value=""
@@ -44,8 +45,25 @@ esac
 ask REALITY_FINGERPRINT "Client TLS fingerprint"
 ask HY2_SNI "Hysteria2 certificate/SNI name"
 ask WEB_DOMAIN "Website domain/SNI for web-grpc mode"
+ask TLS_CERT_MODE "Shared TLS certificate mode (selfsigned or letsencrypt)"
+
+case "$TLS_CERT_MODE" in
+  letsencrypt)
+    ask ACME_EMAIL "Let's Encrypt account email"
+    WEB_ALLOW_INSECURE=0
+    if ! command -v certbot >/dev/null 2>&1; then
+      log "Installing certbot"
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y certbot
+    fi
+    ;;
+  selfsigned)
+    ask WEB_ALLOW_INSECURE "Allow self-signed TLS in generated web-grpc client link (1 or 0)"
+    ;;
+  *) die "TLS_CERT_MODE must be selfsigned or letsencrypt" ;;
+esac
+
 ask WEB_LOCAL_PORT "Internal camouflage website HTTP port"
-ask WEB_ALLOW_INSECURE "Allow self-signed TLS in generated web-grpc client link (1 or 0)"
 ask HY2_MASQUERADE "Hysteria2 masquerade URL"
 
 for p in "$PUBLIC_VLESS_PORT" "$PUBLIC_HY2_PORT" "$VLESS_LISTEN_PORT" "$HY2_LISTEN_PORT" "$VLESS_GRPC_BACKEND_PORT" "$WEB_LOCAL_PORT"; do
@@ -60,6 +78,11 @@ esac
 [[ "$WEB_ALLOW_INSECURE" == "0" || "$WEB_ALLOW_INSECURE" == "1" ]] || die "WEB_ALLOW_INSECURE must be 0 or 1"
 [[ "$VLESS_GRPC_SERVICE" =~ ^[A-Za-z0-9._/-]+$ ]] || die "VLESS_GRPC_SERVICE contains unsupported characters"
 [[ "$VLESS_GRPC_SERVICE" != /* && "$VLESS_GRPC_SERVICE" != */ ]] || die "VLESS_GRPC_SERVICE must not start or end with /"
+
+if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  [[ "$HY2_SNI" == "$WEB_DOMAIN" ]] || die "Let's Encrypt shared mode requires HY2_SNI and WEB_DOMAIN to be identical"
+  [[ "$ACME_EMAIL" == *@*.* ]] || die "ACME_EMAIL must look like an email address"
+fi
 
 if [[ "$VLESS_MODE" == "web-grpc" ]]; then
   [[ "$VLESS_GRPC_BACKEND_PORT" != "$VLESS_LISTEN_PORT" ]] || die "VLESS_GRPC_BACKEND_PORT must differ from VLESS_LISTEN_PORT"
@@ -87,13 +110,21 @@ HY2_CERT_DAYS=$HY2_CERT_DAYS
 WEB_DOMAIN=$WEB_DOMAIN
 WEB_LOCAL_PORT=$WEB_LOCAL_PORT
 WEB_ALLOW_INSECURE=$WEB_ALLOW_INSECURE
+TLS_CERT_MODE=$TLS_CERT_MODE
+ACME_EMAIL=$ACME_EMAIL
 INITIAL_USER=$INITIAL_USER
 EOF
 chmod 600 "$ENV_FILE"
 
-if [[ "$HY2_SNI" != "$old_hy2_sni" || "$WEB_DOMAIN" != "$old_web_domain" ]]; then
-  warn "TLS names changed; regenerating the shared Hysteria2/web certificate. Existing HY2 client pins will change."
+if [[ "$HY2_SNI" != "$old_hy2_sni" || "$WEB_DOMAIN" != "$old_web_domain" || "$TLS_CERT_MODE" != "$old_tls_cert_mode" || ! -f "$VH_HOME/hysteria/certs/server.crt" ]]; then
+  if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+    warn "Requesting a public certificate requires $WEB_DOMAIN to resolve to this server and TCP/80 to be reachable from the Internet."
+  else
+    warn "TLS names or certificate mode changed; regenerating the shared Hysteria2/web certificate. Existing HY2 client pins will change."
+  fi
   generate_certificate
+elif [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  sync_letsencrypt_certificate
 fi
 
 render_configs
@@ -102,8 +133,21 @@ validate_xray_config
 validate_nginx_config
 restart_stack
 
-if [[ "$VLESS_MODE" == "web-grpc" && "$WEB_ALLOW_INSECURE" == "1" ]]; then
-  warn "web-grpc is using the generated self-signed certificate, so the generated VLESS link disables certificate verification."
+if [[ -f "$VH_HOME/systemd/vless-hysteria-cert-renew.service" && -f "$VH_HOME/systemd/vless-hysteria-cert-renew.timer" ]]; then
+  install -m 0644 "$VH_HOME/systemd/vless-hysteria-cert-renew.service" /etc/systemd/system/vless-hysteria-cert-renew.service
+  install -m 0644 "$VH_HOME/systemd/vless-hysteria-cert-renew.timer" /etc/systemd/system/vless-hysteria-cert-renew.timer
+  systemctl daemon-reload
+  if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+    systemctl enable --now vless-hysteria-cert-renew.timer
+  else
+    systemctl disable --now vless-hysteria-cert-renew.timer >/dev/null 2>&1 || true
+  fi
+elif [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  warn "Certificate renewal timer files are not installed in $VH_HOME/systemd. Update the runtime files from the repository."
+fi
+
+if [[ "$VLESS_MODE" == "web-grpc" && "$TLS_CERT_MODE" == "selfsigned" && "$WEB_ALLOW_INSECURE" == "1" ]]; then
+  warn "web-grpc is using a self-signed certificate, so the generated VLESS link disables certificate verification."
 fi
 
 printf '\nConfiguration applied.\n\n'
