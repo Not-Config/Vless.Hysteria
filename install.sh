@@ -113,7 +113,7 @@ HY2_CERT_DAYS="${HY2_CERT_DAYS:-3650}"
 if ss -lntH | awk '{print $4}' | grep -Eq "(^|:)${VLESS_LISTEN_PORT}$"; then
   die "TCP/$VLESS_LISTEN_PORT is already in use. Choose another VLESS_LISTEN_PORT."
 fi
-if ss -lnuH | awk '{print $5}' | grep -Eq "(^|:)${HY2_LISTEN_PORT}$"; then
+if ss -lnuH | awk '{print $4}' | grep -Eq "(^|:)${HY2_LISTEN_PORT}$"; then
   die "UDP/$HY2_LISTEN_PORT is already in use. Choose another HY2_LISTEN_PORT."
 fi
 
