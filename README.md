@@ -82,9 +82,9 @@ Manage users:
 
 ```bash
 sudo /opt/vless-hysteria/user.sh list
-sudo /opt/vless-hysteria/user.sh add teacher
-sudo /opt/vless-hysteria/user.sh links teacher
-sudo /opt/vless-hysteria/user.sh remove teacher
+sudo /opt/vless-hysteria/user.sh add user
+sudo /opt/vless-hysteria/user.sh links user
+sudo /opt/vless-hysteria/user.sh remove user
 ```
 
 Create a backup:
