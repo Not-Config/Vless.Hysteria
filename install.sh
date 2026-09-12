@@ -34,7 +34,7 @@ if [[ -e "$VH_HOME/.env" && $FORCE -ne 1 ]]; then
 fi
 
 prompt_value() {
-  local var="$1" text="$2" default="$3" value="${!var:-}"
+  local var="$1" text="$2" default="$3" value="${!var-}"
   if [[ -z "$value" ]]; then
     if [[ $NON_INTERACTIVE -eq 1 ]]; then
       value="$default"
