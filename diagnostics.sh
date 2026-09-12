@@ -28,6 +28,12 @@ printf '\n===== WATCHDOG =====\n'
 systemctl status vless-hysteria-watchdog.timer --no-pager || true
 journalctl -u vless-hysteria-watchdog.service -n 20 --no-pager || true
 
+if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
+  printf '\n===== CERTIFICATE RENEWAL =====\n'
+  systemctl status vless-hysteria-cert-renew.timer --no-pager || true
+  journalctl -u vless-hysteria-cert-renew.service -n 20 --no-pager || true
+fi
+
 printf '\n===== XRAY LOG =====\n'
 docker logs --tail 50 vpn-xray 2>&1 || true
 
@@ -51,9 +57,10 @@ printf 'REALITY_DEST=%s\n' "$REALITY_DEST"
 printf 'HY2_SNI=%s\n' "$HY2_SNI"
 printf 'WEB_DOMAIN=%s\n' "$WEB_DOMAIN"
 printf 'WEB_LOCAL_PORT=%s\n' "$WEB_LOCAL_PORT"
+printf 'TLS_CERT_MODE=%s\n' "$TLS_CERT_MODE"
 printf 'XRAY_IMAGE=%s\n' "$XRAY_IMAGE"
 printf 'HYSTERIA_IMAGE=%s\n' "$HYSTERIA_IMAGE"
 printf 'NGINX_IMAGE=%s\n' "$NGINX_IMAGE"
 printf 'USERS=%s\n' "$(jq -r '[.[].name] | join(",")' "$USERS_FILE")"
 
-printf '\nNo passwords, UUIDs, private keys, public REALITY keys, short IDs, or certificate pins are printed by this script.\n'
+printf '\nNo passwords, UUIDs, private keys, public REALITY keys, short IDs, certificate pins, or ACME account email are printed by this script.\n'
