@@ -1,0 +1,14 @@
+# Local/runtime state
+.env
+secrets.env
+users.json
+runtime/
+certs/
+*.tar.gz
+*.bak
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
