@@ -17,7 +17,7 @@ for arg in "$@"; do
 Usage: sudo ./install.sh [--non-interactive] [--force]
 
 Environment variables can override installer defaults, for example:
-  PUBLIC_HOST=vpn.example.com REALITY_SNI=www.yandex.ru sudo -E ./install.sh
+  PUBLIC_HOST=vpn.example.com REALITY_SNI=www.yandex.ru REALITY_FINGERPRINT=safari sudo -E ./install.sh
 EOF
       exit 0
       ;;
@@ -115,6 +115,7 @@ prompt_value VLESS_LISTEN_PORT "Server VLESS TCP listen port" "443"
 prompt_value HY2_LISTEN_PORT "Server Hysteria2 UDP listen port" "443"
 prompt_value REALITY_SNI "REALITY SNI" "www.yandex.ru"
 prompt_value REALITY_DEST "REALITY destination host" "$REALITY_SNI"
+prompt_value REALITY_FINGERPRINT "REALITY client TLS fingerprint" "chrome"
 prompt_value HY2_SNI "Hysteria2 certificate/SNI name" "vpn.example.invalid"
 prompt_value HY2_MASQUERADE "Hysteria2 masquerade URL" "https://www.yandex.ru/"
 prompt_value INITIAL_USER "Initial username" "default"
@@ -127,6 +128,10 @@ HY2_CERT_DAYS="${HY2_CERT_DAYS:-3650}"
 [[ "$PUBLIC_HY2_PORT" =~ ^[0-9]+$ && "$PUBLIC_HY2_PORT" -ge 1 && "$PUBLIC_HY2_PORT" -le 65535 ]] || die "Invalid PUBLIC_HY2_PORT"
 [[ "$VLESS_LISTEN_PORT" =~ ^[0-9]+$ && "$VLESS_LISTEN_PORT" -ge 1 && "$VLESS_LISTEN_PORT" -le 65535 ]] || die "Invalid VLESS_LISTEN_PORT"
 [[ "$HY2_LISTEN_PORT" =~ ^[0-9]+$ && "$HY2_LISTEN_PORT" -ge 1 && "$HY2_LISTEN_PORT" -le 65535 ]] || die "Invalid HY2_LISTEN_PORT"
+case "$REALITY_FINGERPRINT" in
+  chrome|firefox|safari|ios|android|edge|360|qq|random|randomized) ;;
+  *) die "Invalid REALITY_FINGERPRINT. Use chrome, firefox, safari, ios, android, edge, 360, qq, random or randomized." ;;
+esac
 [[ "$INITIAL_USER" =~ ^[A-Za-z0-9_.-]{1,32}$ ]] || die "INITIAL_USER must match [A-Za-z0-9_.-] and be 1-32 characters long"
 
 if ss -lntH | awk '{print $4}' | grep -Eq "(^|:)${VLESS_LISTEN_PORT}$"; then
@@ -157,6 +162,7 @@ PUBLIC_VLESS_PORT=$PUBLIC_VLESS_PORT
 PUBLIC_HY2_PORT=$PUBLIC_HY2_PORT
 REALITY_SNI=$REALITY_SNI
 REALITY_DEST=$REALITY_DEST
+REALITY_FINGERPRINT=$REALITY_FINGERPRINT
 HY2_SNI=$HY2_SNI
 HY2_MASQUERADE=$HY2_MASQUERADE
 HY2_CERT_DAYS=$HY2_CERT_DAYS
@@ -179,13 +185,11 @@ fi
 [[ -n "$REALITY_PRIVATE_KEY" && -n "$REALITY_PUBLIC_KEY" ]] || die "Could not parse Xray x25519 output."
 
 REALITY_SHORT_ID="$(openssl rand -hex 8)"
-HY2_OBFS_PASSWORD="$(openssl rand -hex 24)"
 
 cat > "$VH_HOME/secrets.env" <<EOF
 REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
 REALITY_SHORT_ID=$REALITY_SHORT_ID
-HY2_OBFS_PASSWORD=$HY2_OBFS_PASSWORD
 HY2_CERT_SHA256=
 EOF
 chmod 600 "$VH_HOME/secrets.env"
