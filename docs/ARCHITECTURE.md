@@ -2,111 +2,135 @@
 
 ## Goal
 
-The stack keeps the two client transports independent while sharing one Linux host and one Docker deployment.
-
-```text
-                         Internet
-                            |
-              +-------------+-------------+
-              |                           |
-         TCP public port              UDP public port
-              |                           |
-              v                           v
-        +-----------+               +-------------+
-        | Xray-core |               | Hysteria2   |
-        | VLESS     |               | QUIC/HTTP3  |
-        | REALITY   |               | Masquerade  |
-        +-----------+               +-------------+
-              |                           |
-              +-------------+-------------+
-                            |
-                         Internet
-```
+The stack keeps TCP-based VLESS and UDP-based Hysteria2 independent while sharing one Linux host and one Docker deployment.
 
 TCP and UDP can both use port `443` because they are different transport protocols.
+
+## VLESS modes
+
+### REALITY mode
+
+```text
+Internet
+   |
+TCP public port
+   |
+   v
++-----------+
+| Xray-core |
+| VLESS     |
+| REALITY   |
++-----------+
+```
+
+Xray owns the public TCP listener directly. It uses `xtls-rprx-vision`, a configurable REALITY SNI/target and a configurable ClientHello fingerprint.
+
+### Web + gRPC mode
+
+```text
+                         TCP public port
+                               |
+                               v
+                           +-------+
+                           | nginx |
+                           +-------+
+                           /       \
+                          /         \
+                 normal HTTPS     /api/v1/stream/*
+                    website              |
+                                         v
+                                  gRPC over h2c
+                                         |
+                                         v
+                                      +------+
+                                      | Xray |
+                                      | VLESS|
+                                      +------+
+```
+
+nginx owns the public TCP listener and terminates TLS. Normal paths are served as a static website. Only the configured gRPC path is proxied to Xray on a localhost-only backend port.
+
+The generated lab certificate is shared by nginx and Hysteria2. It is self-signed for portability. A public deployment should use a certificate from a publicly trusted CA.
+
+This mode can also be used to study allow-list behavior when the website uses a domain controlled by the operator that is actually allowed by the tested network. A matching SNI alone is not assumed to guarantee passage because filtering can also consider the destination IP, ASN and other signals.
+
+## Hysteria2
+
+```text
+Internet
+   |
+UDP public port
+   |
+   v
++-------------+
+| Hysteria2   |
+| QUIC/HTTP3  |
++-------------+
+   |
+   | unauthenticated HTTP/3 request
+   v
+local nginx website on 127.0.0.1:8080
+```
+
+Hysteria2 uses standard QUIC/HTTP/3 without Salamander. Its default masquerade proxies to the local website so active HTTP/3 requests receive real content instead of a fixed proxy error page.
 
 ## Components
 
 ### Xray-core
 
-Provides:
+Provides VLESS authentication and either:
 
-- VLESS authentication;
-- `xtls-rprx-vision` flow;
-- REALITY TLS camouflage;
-- direct outbound traffic.
+- REALITY + XTLS Vision on the public TCP listener; or
+- a localhost-only gRPC backend behind nginx.
 
-The container is configured with host networking and only `NET_BIND_SERVICE` after dropping all other Linux capabilities.
+### nginx
+
+Provides the camouflage website. In `reality` mode it only listens on the local website port used by Hysteria2. In `web-grpc` mode it additionally owns the public HTTPS listener and routes the configured gRPC path to Xray.
 
 ### Hysteria2
 
-Provides:
-
-- QUIC/UDP transport;
-- native HTTP/3-compatible traffic without Salamander obfuscation;
-- per-user `userpass` authentication;
-- HTTP/3 masquerading through a reverse proxy;
-- certificate SHA-256 pinning for portable self-signed TLS.
-
-The project intentionally leaves Hysteria2 obfuscation disabled so the server keeps normal QUIC/HTTP/3 behavior. For a public deployment that should look like a normal website during ordinary TLS/HTTP/3 checks, a real domain with a publicly trusted certificate is preferable to the portable self-signed lab certificate.
+Provides QUIC/UDP transport, per-user authentication, normal HTTP/3-compatible behavior and certificate pinning for the generated lab certificate.
 
 ### Docker Compose
 
-Both services use `restart: unless-stopped`. Generated runtime configuration is mounted read-only into the containers.
+The three containers use host networking and `restart: unless-stopped`. Generated runtime configuration is mounted read-only.
 
 ### systemd watchdog
 
-Docker restart policy handles ordinary process exits. The watchdog adds a second recovery layer and checks once per minute that:
+The watchdog checks once per minute that Xray, Hysteria2 and nginx are running and that the mode-specific listeners exist. In `web-grpc` mode it checks both the public nginx TCP listener and Xray's local gRPC backend.
 
-- `vpn-xray` is running;
-- the VLESS TCP port is listening;
-- `vpn-hysteria` is running;
-- the Hysteria2 UDP port is listening.
-
-If one service is unhealthy, only that service is restarted.
-
-## Configuration separation
-
-Runtime state lives under `/opt/vless-hysteria`:
+## Runtime state
 
 ```text
 /opt/vless-hysteria/
-├── .env                 # non-secret deployment settings
-├── secrets.env          # REALITY/certificate data
-├── users.json           # per-user credentials
+├── .env
+├── secrets.env
+├── users.json
 ├── compose.yml
-├── xray/config.json     # generated
-├── hysteria/config.yaml # generated
-└── hysteria/certs/      # generated TLS material
+├── xray/config.json
+├── hysteria/config.yaml
+├── hysteria/certs/
+└── web/
+    ├── nginx.conf
+    └── html/index.html
 ```
 
-The source repository contains templates, never generated credentials.
+The source repository contains templates, not generated credentials.
 
 ## NAT model
 
-The public ports placed in client links are deliberately separate from the server listen ports.
-
-A home-lab example:
+Public ports in client links are separate from server listen ports.
 
 ```text
-Public TCP :8443  -> NAT -> server TCP :443 -> VLESS
-Public UDP :8443  -> NAT -> server UDP :443 -> Hysteria2
+Public TCP :8443 -> NAT -> server TCP :443
+Public UDP :8443 -> NAT -> server UDP :443
 ```
-
-A VPS can normally use direct `443/TCP` and `443/UDP` without this translation.
 
 ## Failure domains
 
-The design avoids making one proxy process responsible for both transports.
-
 - Xray failure does not stop Hysteria2.
-- Hysteria2 failure does not stop Xray.
+- Hysteria2 failure does not stop the TCP path.
 - TCP filtering does not automatically imply UDP failure.
 - UDP filtering does not automatically imply TCP failure.
-- Container crashes are recovered by Docker.
-- Listener/container failures are additionally checked by systemd.
-- Complete host/provider failure still requires another server for true high availability.
-
-## Migration
-
-The deployment is intentionally host-independent. A new server needs Docker plus the runtime state. For a fresh identity, simply rerun `install.sh`; for identity-preserving migration, move a protected backup and update the public address before regenerating client links.
+- Docker and the watchdog recover ordinary process/listener failures.
+- Complete host/provider failure still requires another server for real high availability.
