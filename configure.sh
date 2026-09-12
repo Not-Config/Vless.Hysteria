@@ -26,12 +26,18 @@ ask VLESS_LISTEN_PORT "VLESS TCP listen port"
 ask HY2_LISTEN_PORT "Hysteria2 UDP listen port"
 ask REALITY_SNI "REALITY SNI"
 ask REALITY_DEST "REALITY destination host"
+ask REALITY_FINGERPRINT "REALITY client TLS fingerprint"
 ask HY2_SNI "Hysteria2 certificate/SNI name"
 ask HY2_MASQUERADE "Hysteria2 masquerade URL"
 
 for p in "$PUBLIC_VLESS_PORT" "$PUBLIC_HY2_PORT" "$VLESS_LISTEN_PORT" "$HY2_LISTEN_PORT"; do
   [[ "$p" =~ ^[0-9]+$ && "$p" -ge 1 && "$p" -le 65535 ]] || die "Invalid port: $p"
 done
+
+case "$REALITY_FINGERPRINT" in
+  chrome|firefox|safari|ios|android|edge|360|qq|random|randomized) ;;
+  *) die "Invalid REALITY_FINGERPRINT. Use chrome, firefox, safari, ios, android, edge, 360, qq, random or randomized." ;;
+esac
 
 cat > "$ENV_FILE" <<EOF
 XRAY_IMAGE=$XRAY_IMAGE
@@ -43,6 +49,7 @@ PUBLIC_VLESS_PORT=$PUBLIC_VLESS_PORT
 PUBLIC_HY2_PORT=$PUBLIC_HY2_PORT
 REALITY_SNI=$REALITY_SNI
 REALITY_DEST=$REALITY_DEST
+REALITY_FINGERPRINT=$REALITY_FINGERPRINT
 HY2_SNI=$HY2_SNI
 HY2_MASQUERADE=$HY2_MASQUERADE
 HY2_CERT_DAYS=$HY2_CERT_DAYS
