@@ -29,8 +29,8 @@ if ! container_running vpn-xray; then
 elif [[ "$VLESS_MODE" == "reality" ]] && ! tcp_listening "$VLESS_LISTEN_PORT"; then
   logger -t vless-hysteria-watchdog "TCP/$VLESS_LISTEN_PORT is not listening for REALITY; restarting vpn-xray"
   docker restart vpn-xray >/dev/null
-elif [[ "$VLESS_MODE" == "web-grpc" ]] && ! tcp_listening "$VLESS_GRPC_BACKEND_PORT"; then
-  logger -t vless-hysteria-watchdog "gRPC backend TCP/$VLESS_GRPC_BACKEND_PORT is not listening; restarting vpn-xray"
+elif [[ "$VLESS_MODE" == "web-xhttp" ]] && ! tcp_listening "$VLESS_XHTTP_BACKEND_PORT"; then
+  logger -t vless-hysteria-watchdog "XHTTP backend TCP/$VLESS_XHTTP_BACKEND_PORT is not listening; restarting vpn-xray"
   docker restart vpn-xray >/dev/null
 fi
 
@@ -40,7 +40,7 @@ if ! container_running vpn-web; then
 elif ! tcp_listening "$WEB_LOCAL_PORT"; then
   logger -t vless-hysteria-watchdog "Local website TCP/$WEB_LOCAL_PORT is not listening; restarting vpn-web"
   docker restart vpn-web >/dev/null
-elif [[ "$VLESS_MODE" == "web-grpc" ]] && ! tcp_listening "$VLESS_LISTEN_PORT"; then
+elif [[ "$VLESS_MODE" == "web-xhttp" ]] && ! tcp_listening "$VLESS_LISTEN_PORT"; then
   logger -t vless-hysteria-watchdog "Public web/VLESS TCP/$VLESS_LISTEN_PORT is not listening; restarting vpn-web"
   docker restart vpn-web >/dev/null
 fi
