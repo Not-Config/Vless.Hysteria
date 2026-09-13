@@ -38,8 +38,19 @@ load_state() {
 
   # Backward-compatible defaults for older installations.
   VLESS_MODE="${VLESS_MODE:-reality}"
-  VLESS_GRPC_BACKEND_PORT="${VLESS_GRPC_BACKEND_PORT:-10000}"
-  VLESS_GRPC_SERVICE="${VLESS_GRPC_SERVICE:-api/v1/stream}"
+  if [[ "$VLESS_MODE" == "web-grpc" ]]; then
+    VLESS_MODE="web-xhttp"
+  fi
+
+  VLESS_XHTTP_BACKEND_PORT="${VLESS_XHTTP_BACKEND_PORT:-${VLESS_GRPC_BACKEND_PORT:-10000}}"
+  VLESS_XHTTP_PATH="${VLESS_XHTTP_PATH:-/${VLESS_GRPC_SERVICE:-api/v1/stream}}"
+  [[ "$VLESS_XHTTP_PATH" == /* ]] || VLESS_XHTTP_PATH="/$VLESS_XHTTP_PATH"
+  VLESS_XHTTP_PATH="${VLESS_XHTTP_PATH%/}"
+
+  # Compatibility aliases for older helper scripts/runtime files.
+  VLESS_GRPC_BACKEND_PORT="$VLESS_XHTTP_BACKEND_PORT"
+  VLESS_GRPC_SERVICE="${VLESS_XHTTP_PATH#/}"
+
   REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-chrome}"
   WEB_LOCAL_PORT="${WEB_LOCAL_PORT:-8080}"
   WEB_DOMAIN="${WEB_DOMAIN:-${HY2_SNI:-vpn.example.invalid}}"
@@ -170,12 +181,12 @@ render_configs() {
   mkdir -p "$VH_HOME/xray" "$VH_HOME/hysteria" "$VH_HOME/web/html"
 
   local vless_clients hy2_users xray_template nginx_template
-  if [[ "$VLESS_MODE" == "web-grpc" ]]; then
+  if [[ "$VLESS_MODE" == "web-xhttp" ]]; then
     vless_clients="$(
       jq -c '[.[] | {id: .vless_uuid, email: .name}]' "$USERS_FILE"
     )"
-    xray_template="$VH_HOME/templates/xray-grpc.json.tpl"
-    nginx_template="$VH_HOME/templates/nginx-grpc.conf.tpl"
+    xray_template="$VH_HOME/templates/xray-xhttp.json.tpl"
+    nginx_template="$VH_HOME/templates/nginx-xhttp.conf.tpl"
   else
     vless_clients="$(
       jq -c '[.[] | {id: .vless_uuid, flow: "xtls-rprx-vision", email: .name}]' "$USERS_FILE"
@@ -189,8 +200,8 @@ render_configs() {
   )"
 
   export R_VLESS_LISTEN_PORT="$VLESS_LISTEN_PORT"
-  export R_VLESS_GRPC_BACKEND_PORT="$VLESS_GRPC_BACKEND_PORT"
-  export R_VLESS_GRPC_SERVICE="$VLESS_GRPC_SERVICE"
+  export R_VLESS_XHTTP_BACKEND_PORT="$VLESS_XHTTP_BACKEND_PORT"
+  export R_VLESS_XHTTP_PATH="$VLESS_XHTTP_PATH"
   export R_VLESS_CLIENTS_JSON="$vless_clients"
   export R_REALITY_DEST="$REALITY_DEST"
   export R_REALITY_SNI="$REALITY_SNI"
@@ -208,8 +219,8 @@ src, dst = map(pathlib.Path, sys.argv[1:3])
 s = src.read_text()
 repl = {
     "__VLESS_LISTEN_PORT__": os.environ["R_VLESS_LISTEN_PORT"],
-    "__VLESS_GRPC_BACKEND_PORT__": os.environ["R_VLESS_GRPC_BACKEND_PORT"],
-    "__VLESS_GRPC_SERVICE__": os.environ["R_VLESS_GRPC_SERVICE"],
+    "__VLESS_XHTTP_BACKEND_PORT__": os.environ["R_VLESS_XHTTP_BACKEND_PORT"],
+    "__VLESS_XHTTP_PATH__": os.environ["R_VLESS_XHTTP_PATH"],
     "__VLESS_CLIENTS_JSON__": os.environ["R_VLESS_CLIENTS_JSON"],
     "__REALITY_DEST__": os.environ["R_REALITY_DEST"],
     "__REALITY_SNI__": os.environ["R_REALITY_SNI"],
@@ -241,8 +252,8 @@ src, dst = map(pathlib.Path, sys.argv[1:3])
 s = src.read_text()
 repl = {
     "__VLESS_LISTEN_PORT__": os.environ["R_VLESS_LISTEN_PORT"],
-    "__VLESS_GRPC_BACKEND_PORT__": os.environ["R_VLESS_GRPC_BACKEND_PORT"],
-    "__VLESS_GRPC_SERVICE__": os.environ["R_VLESS_GRPC_SERVICE"],
+    "__VLESS_XHTTP_BACKEND_PORT__": os.environ["R_VLESS_XHTTP_BACKEND_PORT"],
+    "__VLESS_XHTTP_PATH__": os.environ["R_VLESS_XHTTP_PATH"],
     "__WEB_LOCAL_PORT__": os.environ["R_WEB_LOCAL_PORT"],
     "__WEB_DOMAIN__": os.environ["R_WEB_DOMAIN"],
 }
@@ -326,29 +337,31 @@ print_user_links() {
     "$HY2_CERT_SHA256" \
     "$WEB_DOMAIN" \
     "$WEB_ALLOW_INSECURE" \
-    "$VLESS_GRPC_SERVICE" \
+    "$VLESS_XHTTP_PATH" \
     "$TLS_CERT_MODE" <<'PY'
 import sys
 from urllib.parse import quote, urlencode
 (
     mode, host, vport, hport, user, uuid, hy2_password, reality_sni,
     reality_fp, reality_public, short_id, hy2_sni, cert_pin, web_domain,
-    web_allow_insecure, grpc_service, tls_cert_mode
+    web_allow_insecure, xhttp_path, tls_cert_mode
 ) = sys.argv[1:]
 
-if mode == "web-grpc":
+if mode == "web-xhttp":
     v_query = {
         "encryption": "none",
         "security": "tls",
         "sni": web_domain,
         "fp": reality_fp,
         "alpn": "h2",
-        "type": "grpc",
-        "serviceName": grpc_service,
+        "type": "xhttp",
+        "host": web_domain,
+        "path": xhttp_path,
+        "mode": "stream-up",
     }
     if tls_cert_mode != "letsencrypt" and web_allow_insecure == "1":
         v_query["allowInsecure"] = "1"
-    vless_name = "VLESS-gRPC-" + user
+    vless_name = "VLESS-XHTTP-" + user
 else:
     v_query = {
         "encryption": "none",
