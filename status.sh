@@ -51,8 +51,8 @@ printf '  Xray container:      %s\n' "$(container_state vpn-xray)"
 printf '  Hysteria2 container: %s\n' "$(container_state vpn-hysteria)"
 printf '  Web container:       %s\n' "$(container_state vpn-web)"
 printf '  TCP/%s:              %s\n' "$VLESS_LISTEN_PORT" "$(port_state_tcp "$VLESS_LISTEN_PORT")"
-if [[ "$VLESS_MODE" == "web-grpc" ]]; then
-  printf '  gRPC backend TCP/%s: %s\n' "$VLESS_GRPC_BACKEND_PORT" "$(port_state_tcp "$VLESS_GRPC_BACKEND_PORT")"
+if [[ "$VLESS_MODE" == "web-xhttp" ]]; then
+  printf '  XHTTP backend TCP/%s: %s\n' "$VLESS_XHTTP_BACKEND_PORT" "$(port_state_tcp "$VLESS_XHTTP_BACKEND_PORT")"
 fi
 printf '  UDP/%s:              %s\n' "$HY2_LISTEN_PORT" "$(port_state_udp "$HY2_LISTEN_PORT")"
 printf '  Web local TCP/%s:    %s\n' "$WEB_LOCAL_PORT" "$(port_state_tcp "$WEB_LOCAL_PORT")"
@@ -76,9 +76,10 @@ fi
 printf '  Public VLESS:        %s:%s/TCP\n' "$PUBLIC_HOST" "$PUBLIC_VLESS_PORT"
 printf '  Public Hysteria2:    %s:%s/UDP\n' "$PUBLIC_HOST" "$PUBLIC_HY2_PORT"
 printf '  Hysteria2 SNI:       %s\n' "$HY2_SNI"
-if [[ "$VLESS_MODE" == "web-grpc" ]]; then
+if [[ "$VLESS_MODE" == "web-xhttp" ]]; then
   printf '  Website SNI:         %s\n' "$WEB_DOMAIN"
-  printf '  gRPC service:        /%s/\n' "$VLESS_GRPC_SERVICE"
+  printf '  XHTTP mode:          stream-up / H2\n'
+  printf '  XHTTP path:          %s\n' "$VLESS_XHTTP_PATH"
 else
   printf '  REALITY SNI:         %s\n' "$REALITY_SNI"
 fi
@@ -88,7 +89,7 @@ if [[ $brief -eq 0 ]]; then
   printf '\nContainers:\n'
   (cd "$VH_HOME" && docker compose ps)
   printf '\nListening sockets:\n'
-  ss -lntup | grep -E "(:${VLESS_LISTEN_PORT}[[:space:]]|:${VLESS_GRPC_BACKEND_PORT}[[:space:]]|:${WEB_LOCAL_PORT}[[:space:]]|:${HY2_LISTEN_PORT}[[:space:]])" || true
+  ss -lntup | grep -E "(:${VLESS_LISTEN_PORT}[[:space:]]|:${VLESS_XHTTP_BACKEND_PORT}[[:space:]]|:${WEB_LOCAL_PORT}[[:space:]]|:${HY2_LISTEN_PORT}[[:space:]])" || true
   printf '\nRecent watchdog entries:\n'
   journalctl -u vless-hysteria-watchdog.service -n 10 --no-pager 2>/dev/null || true
   if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
