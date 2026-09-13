@@ -27,6 +27,7 @@ jobs:
             uninstall.sh \
             watchdog.sh \
             lab-grpc.sh \
+            lab-reality.sh \
             lib/common.sh
       - name: Check shell scripts
         run: |
@@ -41,4 +42,5 @@ jobs:
             uninstall.sh \
             watchdog.sh \
             lab-grpc.sh \
+            lab-reality.sh \
             lib/common.sh
