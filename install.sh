@@ -18,7 +18,7 @@ Usage: sudo ./install.sh [--non-interactive] [--force]
 
 Environment variables can override installer defaults, for example:
   PUBLIC_HOST=vpn.example.com VLESS_MODE=reality REALITY_SNI=www.yandex.ru sudo -E ./install.sh
-  PUBLIC_HOST=vpn.example.com VLESS_MODE=web-grpc HY2_SNI=vpn.example.com WEB_DOMAIN=vpn.example.com TLS_CERT_MODE=letsencrypt ACME_EMAIL=admin@example.com sudo -E ./install.sh
+  PUBLIC_HOST=vpn.example.com VLESS_MODE=web-xhttp HY2_SNI=vpn.example.com WEB_DOMAIN=vpn.example.com TLS_CERT_MODE=letsencrypt ACME_EMAIL=admin@example.com sudo -E ./install.sh
 EOF
       exit 0
       ;;
@@ -124,25 +124,25 @@ prompt_value PUBLIC_VLESS_PORT "Public VLESS TCP port" "443"
 prompt_value PUBLIC_HY2_PORT "Public Hysteria2 UDP port" "443"
 prompt_value VLESS_LISTEN_PORT "Server public VLESS/web TCP listen port" "443"
 prompt_value HY2_LISTEN_PORT "Server Hysteria2 UDP listen port" "443"
-prompt_value VLESS_MODE "VLESS mode (reality or web-grpc)" "reality"
+prompt_value VLESS_MODE "VLESS mode (reality or web-xhttp)" "reality"
 
 case "$VLESS_MODE" in
   reality)
     prompt_value REALITY_SNI "REALITY SNI" "www.yandex.ru"
     prompt_value REALITY_DEST "REALITY destination host" "$REALITY_SNI"
     ;;
-  web-grpc)
+  web-xhttp)
     REALITY_SNI="${REALITY_SNI:-www.yandex.ru}"
     REALITY_DEST="${REALITY_DEST:-$REALITY_SNI}"
-    prompt_value VLESS_GRPC_BACKEND_PORT "Local Xray gRPC backend port" "10000"
-    prompt_value VLESS_GRPC_SERVICE "VLESS gRPC service name" "api/v1/stream"
+    prompt_value VLESS_XHTTP_BACKEND_PORT "Local Xray XHTTP backend port" "10000"
+    prompt_value VLESS_XHTTP_PATH "VLESS XHTTP path" "/api/v1/stream"
     ;;
-  *) die "VLESS_MODE must be reality or web-grpc" ;;
+  *) die "VLESS_MODE must be reality or web-xhttp" ;;
 esac
 
 prompt_value REALITY_FINGERPRINT "Client TLS fingerprint" "chrome"
 prompt_value HY2_SNI "Hysteria2 certificate/SNI name" "vpn.example.invalid"
-prompt_value WEB_DOMAIN "Website domain/SNI for web-grpc mode" "$HY2_SNI"
+prompt_value WEB_DOMAIN "Website domain/SNI for web-xhttp mode" "$HY2_SNI"
 prompt_value TLS_CERT_MODE "Shared TLS certificate mode (selfsigned or letsencrypt)" "selfsigned"
 
 case "$TLS_CERT_MODE" in
@@ -152,7 +152,7 @@ case "$TLS_CERT_MODE" in
     ;;
   selfsigned)
     ACME_EMAIL="${ACME_EMAIL:-}"
-    prompt_value WEB_ALLOW_INSECURE "Allow self-signed TLS in generated web-grpc client link (1 or 0)" "1"
+    prompt_value WEB_ALLOW_INSECURE "Allow self-signed TLS in generated web-xhttp client link (1 or 0)" "1"
     ;;
   *) die "TLS_CERT_MODE must be selfsigned or letsencrypt" ;;
 esac
@@ -161,14 +161,16 @@ prompt_value WEB_LOCAL_PORT "Internal camouflage website HTTP port" "8080"
 prompt_value HY2_MASQUERADE "Hysteria2 masquerade URL" "http://127.0.0.1:${WEB_LOCAL_PORT}/"
 prompt_value INITIAL_USER "Initial username" "default"
 
-VLESS_GRPC_BACKEND_PORT="${VLESS_GRPC_BACKEND_PORT:-10000}"
-VLESS_GRPC_SERVICE="${VLESS_GRPC_SERVICE:-api/v1/stream}"
+VLESS_XHTTP_BACKEND_PORT="${VLESS_XHTTP_BACKEND_PORT:-10000}"
+VLESS_XHTTP_PATH="${VLESS_XHTTP_PATH:-/api/v1/stream}"
+[[ "$VLESS_XHTTP_PATH" == /* ]] || VLESS_XHTTP_PATH="/$VLESS_XHTTP_PATH"
+VLESS_XHTTP_PATH="${VLESS_XHTTP_PATH%/}"
 XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:26.9.8}"
 HYSTERIA_IMAGE="${HYSTERIA_IMAGE:-tobyxdd/hysteria:v2.12.2}"
 NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.30.4-alpine}"
 HY2_CERT_DAYS="${HY2_CERT_DAYS:-3650}"
 
-for p in "$PUBLIC_VLESS_PORT" "$PUBLIC_HY2_PORT" "$VLESS_LISTEN_PORT" "$HY2_LISTEN_PORT" "$VLESS_GRPC_BACKEND_PORT" "$WEB_LOCAL_PORT"; do
+for p in "$PUBLIC_VLESS_PORT" "$PUBLIC_HY2_PORT" "$VLESS_LISTEN_PORT" "$HY2_LISTEN_PORT" "$VLESS_XHTTP_BACKEND_PORT" "$WEB_LOCAL_PORT"; do
   [[ "$p" =~ ^[0-9]+$ && "$p" -ge 1 && "$p" -le 65535 ]] || die "Invalid port: $p"
 done
 
@@ -178,8 +180,7 @@ case "$REALITY_FINGERPRINT" in
 esac
 
 [[ "$WEB_ALLOW_INSECURE" == "0" || "$WEB_ALLOW_INSECURE" == "1" ]] || die "WEB_ALLOW_INSECURE must be 0 or 1"
-[[ "$VLESS_GRPC_SERVICE" =~ ^[A-Za-z0-9._/-]+$ ]] || die "VLESS_GRPC_SERVICE contains unsupported characters"
-[[ "$VLESS_GRPC_SERVICE" != /* && "$VLESS_GRPC_SERVICE" != */ ]] || die "VLESS_GRPC_SERVICE must not start or end with /"
+[[ "$VLESS_XHTTP_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "VLESS_XHTTP_PATH contains unsupported characters"
 [[ "$INITIAL_USER" =~ ^[A-Za-z0-9_.-]{1,32}$ ]] || die "INITIAL_USER must match [A-Za-z0-9_.-] and be 1-32 characters long"
 
 if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
@@ -187,16 +188,16 @@ if [[ "$TLS_CERT_MODE" == "letsencrypt" ]]; then
   [[ "$ACME_EMAIL" == *@*.* ]] || die "ACME_EMAIL must look like an email address"
 fi
 
-if [[ "$VLESS_MODE" == "web-grpc" ]]; then
-  [[ "$VLESS_GRPC_BACKEND_PORT" != "$VLESS_LISTEN_PORT" ]] || die "VLESS_GRPC_BACKEND_PORT must differ from VLESS_LISTEN_PORT"
+if [[ "$VLESS_MODE" == "web-xhttp" ]]; then
+  [[ "$VLESS_XHTTP_BACKEND_PORT" != "$VLESS_LISTEN_PORT" ]] || die "VLESS_XHTTP_BACKEND_PORT must differ from VLESS_LISTEN_PORT"
   [[ "$WEB_LOCAL_PORT" != "$VLESS_LISTEN_PORT" ]] || die "WEB_LOCAL_PORT must differ from VLESS_LISTEN_PORT"
 fi
 
 if port_in_use_tcp "$VLESS_LISTEN_PORT"; then
   die "TCP/$VLESS_LISTEN_PORT is already in use. Choose another VLESS_LISTEN_PORT."
 fi
-if [[ "$VLESS_MODE" == "web-grpc" ]] && port_in_use_tcp "$VLESS_GRPC_BACKEND_PORT"; then
-  die "TCP/$VLESS_GRPC_BACKEND_PORT is already in use. Choose another VLESS_GRPC_BACKEND_PORT."
+if [[ "$VLESS_MODE" == "web-xhttp" ]] && port_in_use_tcp "$VLESS_XHTTP_BACKEND_PORT"; then
+  die "TCP/$VLESS_XHTTP_BACKEND_PORT is already in use. Choose another VLESS_XHTTP_BACKEND_PORT."
 fi
 if port_in_use_tcp "$WEB_LOCAL_PORT"; then
   die "TCP/$WEB_LOCAL_PORT is already in use. Choose another WEB_LOCAL_PORT."
@@ -216,10 +217,10 @@ install -d -m 0750 \
   "$VH_HOME/web/html"
 install -m 0644 "$SOURCE_DIR/compose.yml" "$VH_HOME/compose.yml"
 install -m 0644 "$SOURCE_DIR/templates/xray.json.tpl" "$VH_HOME/templates/xray.json.tpl"
-install -m 0644 "$SOURCE_DIR/templates/xray-grpc.json.tpl" "$VH_HOME/templates/xray-grpc.json.tpl"
+install -m 0644 "$SOURCE_DIR/templates/xray-xhttp.json.tpl" "$VH_HOME/templates/xray-xhttp.json.tpl"
 install -m 0644 "$SOURCE_DIR/templates/hysteria.yaml.tpl" "$VH_HOME/templates/hysteria.yaml.tpl"
 install -m 0644 "$SOURCE_DIR/templates/nginx-local.conf.tpl" "$VH_HOME/templates/nginx-local.conf.tpl"
-install -m 0644 "$SOURCE_DIR/templates/nginx-grpc.conf.tpl" "$VH_HOME/templates/nginx-grpc.conf.tpl"
+install -m 0644 "$SOURCE_DIR/templates/nginx-xhttp.conf.tpl" "$VH_HOME/templates/nginx-xhttp.conf.tpl"
 install -m 0644 "$SOURCE_DIR/web/index.html" "$VH_HOME/web/html/index.html"
 install -m 0644 "$SOURCE_DIR/lib/common.sh" "$VH_HOME/lib/common.sh"
 
@@ -241,8 +242,8 @@ HYSTERIA_IMAGE=$HYSTERIA_IMAGE
 NGINX_IMAGE=$NGINX_IMAGE
 VLESS_MODE=$VLESS_MODE
 VLESS_LISTEN_PORT=$VLESS_LISTEN_PORT
-VLESS_GRPC_BACKEND_PORT=$VLESS_GRPC_BACKEND_PORT
-VLESS_GRPC_SERVICE=$VLESS_GRPC_SERVICE
+VLESS_XHTTP_BACKEND_PORT=$VLESS_XHTTP_BACKEND_PORT
+VLESS_XHTTP_PATH=$VLESS_XHTTP_PATH
 HY2_LISTEN_PORT=$HY2_LISTEN_PORT
 PUBLIC_HOST=$PUBLIC_HOST
 PUBLIC_VLESS_PORT=$PUBLIC_VLESS_PORT
@@ -305,8 +306,8 @@ validate_reality_target
 validate_xray_config
 validate_nginx_config
 
-if [[ "$VLESS_MODE" == "web-grpc" && "$TLS_CERT_MODE" == "selfsigned" && "$WEB_ALLOW_INSECURE" == "1" ]]; then
-  warn "web-grpc is using a self-signed certificate. The generated VLESS link disables certificate verification. Use TLS_CERT_MODE=letsencrypt for a normal public certificate."
+if [[ "$VLESS_MODE" == "web-xhttp" && "$TLS_CERT_MODE" == "selfsigned" && "$WEB_ALLOW_INSECURE" == "1" ]]; then
+  warn "web-xhttp is using a self-signed certificate. The generated VLESS link disables certificate verification. Use TLS_CERT_MODE=letsencrypt for a normal public certificate."
 fi
 
 log "Starting VPN stack"
