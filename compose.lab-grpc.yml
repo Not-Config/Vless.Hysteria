@@ -1,0 +1,23 @@
+services:
+  lab-grpc:
+    image: ${XRAY_IMAGE}
+    container_name: vpn-lab-grpc
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    volumes:
+      - ./lab-grpc/config.json:/usr/local/etc/xray/config.json:ro
+    command:
+      - run
+      - -config
+      - /usr/local/etc/xray/config.json
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
