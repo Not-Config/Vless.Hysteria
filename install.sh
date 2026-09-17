@@ -19,6 +19,7 @@ Usage: sudo ./install.sh [--non-interactive] [--force]
 Environment variables can override installer defaults, for example:
   PUBLIC_HOST=vpn.example.com VLESS_MODE=reality REALITY_SNI=www.yandex.ru sudo -E ./install.sh
   PUBLIC_HOST=vpn.example.com VLESS_MODE=web-xhttp HY2_SNI=vpn.example.com WEB_DOMAIN=vpn.example.com TLS_CERT_MODE=letsencrypt ACME_EMAIL=admin@example.com sudo -E ./install.sh
+  VLESS_MODE=web-xhttp CAMOUFLAGE_MODE=reverse-proxy CAMOUFLAGE_UPSTREAM=https://prime-top.ru sudo -E ./install.sh
 EOF
       exit 0
       ;;
@@ -72,6 +73,21 @@ port_in_use_udp() {
   ss -lnuH | awk '{print $4}' | grep -Eq "(^|:)${port}$"
 }
 
+validate_camouflage_upstream() {
+  python3 - "$1" <<'PY' >/dev/null 2>&1
+import sys
+from urllib.parse import urlsplit
+
+u = urlsplit(sys.argv[1])
+if u.scheme != "https" or not u.hostname:
+    raise SystemExit(1)
+if u.username or u.password or u.query or u.fragment:
+    raise SystemExit(1)
+if u.path not in ("", "/"):
+    raise SystemExit(1)
+PY
+}
+
 install_base_packages() {
   log "Installing base packages"
   apt-get update
@@ -97,8 +113,8 @@ install_docker() {
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
-  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/%s %s stable\n' \
-    "$(dpkg --print-architecture)" "$ID" "$VERSION_CODENAME" \
+  printf 'deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\n' \
+    "$(dpkg --print-architecture)" "/etc/apt/keyrings/docker.asc" "$ID" "$VERSION_CODENAME" \
     > /etc/apt/sources.list.d/docker.list
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -126,16 +142,31 @@ prompt_value VLESS_LISTEN_PORT "Server public VLESS/web TCP listen port" "443"
 prompt_value HY2_LISTEN_PORT "Server Hysteria2 UDP listen port" "443"
 prompt_value VLESS_MODE "VLESS mode (reality or web-xhttp)" "reality"
 
+CAMOUFLAGE_MODE="${CAMOUFLAGE_MODE:-local}"
+CAMOUFLAGE_UPSTREAM="${CAMOUFLAGE_UPSTREAM:-https://prime-top.ru}"
+
 case "$VLESS_MODE" in
   reality)
     prompt_value REALITY_SNI "REALITY SNI" "www.yandex.ru"
     prompt_value REALITY_DEST "REALITY destination host" "$REALITY_SNI"
+    CAMOUFLAGE_MODE=local
     ;;
   web-xhttp)
     REALITY_SNI="${REALITY_SNI:-www.yandex.ru}"
     REALITY_DEST="${REALITY_DEST:-$REALITY_SNI}"
     prompt_value VLESS_XHTTP_BACKEND_PORT "Local Xray XHTTP backend port" "10000"
     prompt_value VLESS_XHTTP_PATH "VLESS XHTTP path" "/api/v1/stream"
+    prompt_value CAMOUFLAGE_MODE "Camouflage website mode (local or reverse-proxy)" "$CAMOUFLAGE_MODE"
+    case "$CAMOUFLAGE_MODE" in
+      local)
+        ;;
+      reverse-proxy)
+        prompt_value CAMOUFLAGE_UPSTREAM "Camouflage upstream HTTPS URL" "$CAMOUFLAGE_UPSTREAM"
+        validate_camouflage_upstream "$CAMOUFLAGE_UPSTREAM" || die "CAMOUFLAGE_UPSTREAM must be an HTTPS origin URL such as https://prime-top.ru"
+        CAMOUFLAGE_UPSTREAM="${CAMOUFLAGE_UPSTREAM%/}"
+        ;;
+      *) die "CAMOUFLAGE_MODE must be local or reverse-proxy" ;;
+    esac
     ;;
   *) die "VLESS_MODE must be reality or web-xhttp" ;;
 esac
@@ -221,6 +252,7 @@ install -m 0644 "$SOURCE_DIR/templates/xray-xhttp.json.tpl" "$VH_HOME/templates/
 install -m 0644 "$SOURCE_DIR/templates/hysteria.yaml.tpl" "$VH_HOME/templates/hysteria.yaml.tpl"
 install -m 0644 "$SOURCE_DIR/templates/nginx-local.conf.tpl" "$VH_HOME/templates/nginx-local.conf.tpl"
 install -m 0644 "$SOURCE_DIR/templates/nginx-xhttp.conf.tpl" "$VH_HOME/templates/nginx-xhttp.conf.tpl"
+install -m 0644 "$SOURCE_DIR/templates/nginx-xhttp-reverse-proxy.conf.tpl" "$VH_HOME/templates/nginx-xhttp-reverse-proxy.conf.tpl"
 install -m 0644 "$SOURCE_DIR/web/index.html" "$VH_HOME/web/html/index.html"
 install -m 0644 "$SOURCE_DIR/lib/common.sh" "$VH_HOME/lib/common.sh"
 
@@ -257,6 +289,8 @@ HY2_CERT_DAYS=$HY2_CERT_DAYS
 WEB_DOMAIN=$WEB_DOMAIN
 WEB_LOCAL_PORT=$WEB_LOCAL_PORT
 WEB_ALLOW_INSECURE=$WEB_ALLOW_INSECURE
+CAMOUFLAGE_MODE=$CAMOUFLAGE_MODE
+CAMOUFLAGE_UPSTREAM=$CAMOUFLAGE_UPSTREAM
 TLS_CERT_MODE=$TLS_CERT_MODE
 ACME_EMAIL=$ACME_EMAIL
 INITIAL_USER=$INITIAL_USER
