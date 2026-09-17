@@ -20,6 +20,21 @@ ask() {
   printf -v "$var" '%s' "${value:-$current}"
 }
 
+validate_camouflage_upstream() {
+  python3 - "$1" <<'PY' >/dev/null 2>&1
+import sys
+from urllib.parse import urlsplit
+
+u = urlsplit(sys.argv[1])
+if u.scheme != "https" or not u.hostname:
+    raise SystemExit(1)
+if u.username or u.password or u.query or u.fragment:
+    raise SystemExit(1)
+if u.path not in ("", "/"):
+    raise SystemExit(1)
+PY
+}
+
 printf 'Reconfigure Vless.Hysteria\n'
 printf 'Press Enter to keep the current value.\n\n'
 
@@ -34,10 +49,22 @@ case "$VLESS_MODE" in
   reality)
     ask REALITY_SNI "REALITY SNI"
     ask REALITY_DEST "REALITY destination host"
+    CAMOUFLAGE_MODE=local
     ;;
   web-xhttp)
     ask VLESS_XHTTP_BACKEND_PORT "Local Xray XHTTP backend port"
     ask VLESS_XHTTP_PATH "VLESS XHTTP path"
+    ask CAMOUFLAGE_MODE "Camouflage website mode (local or reverse-proxy)"
+    case "$CAMOUFLAGE_MODE" in
+      local)
+        ;;
+      reverse-proxy)
+        ask CAMOUFLAGE_UPSTREAM "Camouflage upstream HTTPS URL"
+        validate_camouflage_upstream "$CAMOUFLAGE_UPSTREAM" || die "CAMOUFLAGE_UPSTREAM must be an HTTPS origin URL such as https://prime-top.ru"
+        CAMOUFLAGE_UPSTREAM="${CAMOUFLAGE_UPSTREAM%/}"
+        ;;
+      *) die "CAMOUFLAGE_MODE must be local or reverse-proxy" ;;
+    esac
     ;;
   *) die "VLESS_MODE must be reality or web-xhttp" ;;
 esac
@@ -110,6 +137,8 @@ HY2_CERT_DAYS=$HY2_CERT_DAYS
 WEB_DOMAIN=$WEB_DOMAIN
 WEB_LOCAL_PORT=$WEB_LOCAL_PORT
 WEB_ALLOW_INSECURE=$WEB_ALLOW_INSECURE
+CAMOUFLAGE_MODE=$CAMOUFLAGE_MODE
+CAMOUFLAGE_UPSTREAM=$CAMOUFLAGE_UPSTREAM
 TLS_CERT_MODE=$TLS_CERT_MODE
 ACME_EMAIL=$ACME_EMAIL
 INITIAL_USER=$INITIAL_USER
