@@ -55,6 +55,8 @@ load_state() {
   WEB_LOCAL_PORT="${WEB_LOCAL_PORT:-8080}"
   WEB_DOMAIN="${WEB_DOMAIN:-${HY2_SNI:-vpn.example.invalid}}"
   WEB_ALLOW_INSECURE="${WEB_ALLOW_INSECURE:-1}"
+  CAMOUFLAGE_MODE="${CAMOUFLAGE_MODE:-local}"
+  CAMOUFLAGE_UPSTREAM="${CAMOUFLAGE_UPSTREAM:-https://prime-top.ru}"
   NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.30.4-alpine}"
   TLS_CERT_MODE="${TLS_CERT_MODE:-selfsigned}"
   ACME_EMAIL="${ACME_EMAIL:-}"
@@ -186,7 +188,18 @@ render_configs() {
       jq -c '[.[] | {id: .vless_uuid, email: .name}]' "$USERS_FILE"
     )"
     xray_template="$VH_HOME/templates/xray-xhttp.json.tpl"
-    nginx_template="$VH_HOME/templates/nginx-xhttp.conf.tpl"
+
+    case "$CAMOUFLAGE_MODE" in
+      local)
+        nginx_template="$VH_HOME/templates/nginx-xhttp.conf.tpl"
+        ;;
+      reverse-proxy)
+        nginx_template="$VH_HOME/templates/nginx-xhttp-reverse-proxy.conf.tpl"
+        ;;
+      *)
+        die "CAMOUFLAGE_MODE must be local or reverse-proxy"
+        ;;
+    esac
   else
     vless_clients="$(
       jq -c '[.[] | {id: .vless_uuid, flow: "xtls-rprx-vision", email: .name}]' "$USERS_FILE"
@@ -194,6 +207,8 @@ render_configs() {
     xray_template="$VH_HOME/templates/xray.json.tpl"
     nginx_template="$VH_HOME/templates/nginx-local.conf.tpl"
   fi
+
+  [[ -f "$nginx_template" ]] || die "Missing nginx template: $nginx_template"
 
   hy2_users="$(
     jq -r '.[] | "    " + .name + ": \"" + .hy2_password + "\""' "$USERS_FILE"
@@ -212,6 +227,7 @@ render_configs() {
   export R_HY2_MASQUERADE="$HY2_MASQUERADE"
   export R_WEB_LOCAL_PORT="$WEB_LOCAL_PORT"
   export R_WEB_DOMAIN="$WEB_DOMAIN"
+  export R_CAMOUFLAGE_UPSTREAM="$CAMOUFLAGE_UPSTREAM"
 
   python3 - "$xray_template" "$VH_HOME/xray/config.json" <<'PY'
 import os, pathlib, sys
@@ -256,6 +272,7 @@ repl = {
     "__VLESS_XHTTP_PATH__": os.environ["R_VLESS_XHTTP_PATH"],
     "__WEB_LOCAL_PORT__": os.environ["R_WEB_LOCAL_PORT"],
     "__WEB_DOMAIN__": os.environ["R_WEB_DOMAIN"],
+    "__CAMOUFLAGE_UPSTREAM__": os.environ["R_CAMOUFLAGE_UPSTREAM"],
 }
 for old, new in repl.items():
     s = s.replace(old, new)
