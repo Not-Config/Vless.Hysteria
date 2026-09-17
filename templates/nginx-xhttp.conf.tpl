@@ -35,9 +35,10 @@ http {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
 
-    # XHTTP stream-up uses HTTP/2 requests with gRPC-like headers by default.
+    # Match both the configured XHTTP path itself and any XHTTP subpaths.
+    # stream-up uses HTTP/2 requests with gRPC-like headers by default.
     # Xray upstream docs recommend grpc_pass for this Nginx topology.
-    location ^~ __VLESS_XHTTP_PATH__/ {
+    location ^~ __VLESS_XHTTP_PATH__ {
       grpc_pass grpc://127.0.0.1:__VLESS_XHTTP_BACKEND_PORT__;
       grpc_set_header Host $host;
       grpc_set_header X-Real-IP $remote_addr;
